@@ -1,1 +1,1 @@
-from tdscf.bo import *
+from pyscf.tdscf import bo
