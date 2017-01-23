@@ -1,0 +1,2 @@
+To install cp ./* ~/PATH TO YOUR PYSCF/ 
+and rebuild your pyscf. 
