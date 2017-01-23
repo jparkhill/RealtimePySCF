@@ -1,0 +1,1804 @@
+#ifndef TCLEE2h
+#define TCLEE2h
+// <Loggins> DANGERZONEEE...<\Loggins>
+#ifndef ARMA_NO_DEBUG
+#define ARMA_NO_DEBUG 1
+#endif
+#ifndef ARMA_CHECK
+#define ARMA_CHECK 0
+#endif
+
+// Must have user defined reductions which were a feature of OMP 4.0 in 2013.
+#ifdef _OPENMP
+#if _OPENMP > 201300
+#define HASUDR 1
+#else
+#define HASUDR 0
+#endif
+#else
+#define HASUDR 0
+#endif
+
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <string>
+#include <map>
+#include <algorithm>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+#include <armadillo>
+#include "math.h"
+#include "rks.h"
+#include "TCL.h"
+#include "TCL_ActiveSpace.h"
+#include "TCL_polematrices.h"
+// To grab our 2e integrals.
+#include "../cdman/rimp2grad.h"
+#include "../cdman/ricispd.h"
+//#include "noci_mp2.h"
+//#include "KeyVtoM.hh"
+#include <liblas/liblas.h>
+#include "fileman_util.h"
+
+using namespace arma;
+
+class EE2{
+public:
+    int n_ao, n_mo, n_occ, n_aux;
+    int n,n2,n3,n4;
+    int tn,tn2,tn3,tn4;
+
+    int no,nv,nact;
+    int g0flag;
+    
+    std::map<std::string,double> params;
+    ASParameters* asp;
+    TCLMatrices* tcl;
+// Eventually active space could speed up both fock build and the correlated part.
+// For now it will just speed up the correlated part.
+// The setup is done in TCL_Prop.h.
+// Rho is passed/propagated in subspace.
+    
+    bool B_Built;
+    bool InCore;
+    double nuclear_energy,Ehf,Epseudo,lambda,Emp2,thresh; // Lambda is an adiabatic parameter to warm the system.
+    cube BpqR; // Lowdin basis, calculated once on construction and fixed throughout.
+    
+    mat RSinv;
+    mat H,X;
+    cx_mat F,V,C;
+    cx_mat r2; // The two-body DM.
+    cx_mat rho0; // The original density for the inhomogeneity.
+    vec eigs;
+    
+    // This is handy to reduce B rebuilds, if V=Curr then CurrInt is not rebuilt
+    cx_mat IntCur, VCur;
+    cx_mat Vso;// Spin-orbital V.
+    
+    typedef complex<double> cx;
+    cx j; // The imaginary unit.
+    
+    EE2(int n_mo_, int n_occ_, rks* the_scf, cx_mat& Rho_, cx_mat& V_,const std::map<std::string,double>& params_ = std::map<std::string,double>(), ASParameters* asp_= NULL, TCLMatrices* tcl_=NULL): n_mo(n_mo_), j(0.0,1.0), n_occ(n_occ_), H(the_scf->H), X(the_scf->X), V(V_), B_Built(false), params(params_), lambda(1.0), thresh(pow(10.0,-11.0)), asp(asp_), tcl(tcl_), rho0(1,1)
+    {
+        int LenV = megtot();
+        int IBASIS = rem_read(REM_IBASIS);
+        int stat = STAT_NBASIS;
+        int Job;
+        int IBasisAux = rem_read(REM_AUX_BASIS);
+        nuclear_energy = the_scf->nuclear_energy();
+        
+        ftnshlsstats(&n_aux,&stat, &IBasisAux);
+        cout << "------------------------------" << endl;
+        cout << "-------- EE2 JAP 2015 --------" << endl;
+        cout << "--------   Corr On    --------" << endl;
+        cout << "------------------------------" << endl;
+        cout << "BBGKY" << params["BBGKY"] << endl; // Does cumulant decomposed BBGKY2
+        cout << "RIFock:" << params["RIFock"] << endl;
+        
+        if (params["ActiveSpace"])
+        {
+            nact = asp->ActiveLast-asp->ActiveFirst+1;
+            cout << "Active Space: " << asp->ActiveFirst << " to " << asp->ActiveLast << " nact " << nact << endl;
+        }
+#ifdef _OPENMP
+        cout << "OMP spec:" << _OPENMP << " n_threads " << omp_get_num_threads() << endl;
+#if HASUDR
+        cout << "Your compiler supports parallism in EE2. You'll be toasty warm soon." << endl;
+#else
+        cout << "Your compiler does not support OMP parallism in EE2, please recompile with GCC 5.0 or Intel 16.0 or later" << endl;
+#endif
+#endif
+        
+        if (params["ActiveSpace"])
+        {
+            n=nact;
+            n2=n*n;
+            n3=n2*n;
+            n4=n3*n;
+            
+            tn=2*n;
+            tn2=4*n2;
+            tn3=8*n3;
+            tn4=16*n4;
+            
+            no=asp->ne;
+            nv=n_mo-n_occ;
+        }
+        else
+        {
+            n=n_mo;
+            n2=n_mo*n_mo;
+            n3=n2*n_mo;
+            n4=n3*n_mo;
+            
+            tn=2*n_mo;
+            tn2=4*n_mo*n_mo;
+            tn3=8*n2*n_mo;
+            tn4=16*n3*n_mo;
+            
+            no=n_occ;
+            nv=n_mo-n_occ;
+        }
+        
+        cout << "NMO: " << n_mo << " NAux: " << n_aux << " Size BpqR " << n_mo*n_mo*n_aux*8/(1024*1024) << "MB" << endl;
+        cout << "Size IntCur: " << n4*sizeof(cx)/(1024*1024) << "MB" << endl;
+        InCore = (n4*sizeof(cx)/(1024*1024) < 10.0); // Whether to do in-core integrals
+        if (!InCore)
+            cout << "Using a direct algorithm... " << endl;
+        
+        BpqR.resize(n_mo,n_mo,n_aux);
+        RSinv.resize(n_aux,n_aux);
+        if(!params["RIFock"])
+            IntCur.resize(n2,n2);
+        {
+            // get (P|Q)**(-1/2) and save it to disk
+            //
+            //  First, fool trnjob into thinking we want RIMP2
+            int tmp1 = rem_read(REM_LEVCOR);
+            rem_write(103, REM_LEVCOR);
+            trnjob(&Job);
+            //  Then, write it back
+            rem_write(tmp1, REM_LEVCOR);
+            // form (P|Q)^-1/2 matrix and saves it to FILE_2C2E_INV_INTS
+            //
+            threading_policy::enable_blas_only();
+            invsqrtpq(&n_aux, &Job);
+            threading_policy::pop();
+            // read (P|Q)^-1/2
+            FileMan(FM_OPEN_RW, FILE_2C2E_INVSQ_INTS, 0, 0, 0, 0, 0);
+            LongFileMan(FM_READ, FILE_2C2E_INVSQ_INTS, FM_DP, n_aux*n_aux, 0, FM_BEG, RSinv.memptr(), 0);
+            FileMan(FM_CLOSE, FILE_2C2E_INVSQ_INTS, 0, 0, 0, 0, 0);
+        }
+        //RSinv.print("RSinv");
+        BuildB();
+        
+        if (!params["StartFromSetman"])
+        {
+            Rho_.eye();
+            if (!params["ActiveSpace"])
+                Rho_.submat(n_occ,n_occ,n_mo-1,n_mo-1) *= 0.0;
+            else
+                Rho_.submat(asp->ne,asp->ne,n-1,n-1) *= 0.0;
+        }
+        FockBuild(Rho_,V_);
+        
+        if (params["Print"])
+            cout << "Initial V build." << endl;
+        
+        if (!params["RIFock"])
+            UpdateVi(V_);
+        
+        if (params["Print"])
+            cout << "Finished initial V build." << endl;
+        
+        // To run external to Q-Chem and avoid the two minute link.
+        if (params["DumpEE2"])
+        {
+            V_.save("V",arma_binary);
+            X.save("X",arma_binary);
+            BpqR.save("BpqR",arma_binary);
+        }
+       
+        if (params["BBGKY"])
+        {
+            // Initialize the two body density separably.
+            Separabler2(Rho_);
+        }
+        
+        // Fock build, integral build and initialize the density.
+        if (!params["SkipInitial"] and !params["StartFromSetman"])
+        {
+            CorrelateInitial(Rho_,V_);
+        }
+        else
+        {
+            cout << "Skipping initialization." << endl;
+        }
+        
+        rho0 = V*Rho_*(V.t());
+    }
+    
+    // Try to adiabatically turn on the correlation.
+    void GML(arma::cx_mat& Rho_, arma::cx_mat& V_)
+    {
+        cout << "Adiabatically Correlating the system." << endl;
+        double dt=0.02; int NGML=300;
+        cx_mat RhoM12_(Rho_);
+        bool ison=false;
+        for(int i=0; i<NGML; ++i)
+        {
+            lambda=(1.0+i)/((double)NGML);
+            step(NULL,NULL,eigs,V,Rho_,RhoM12_,i*dt, dt,ison);
+            if (i%10==0)
+                cout << "Gell-Man Low Iteration:" << i << " Lambda " << lambda << " ehf:" << Ehf << endl;
+        }
+    }
+    
+    // Generate rate matrix for populations
+    void Stability(cx_mat& Rho)
+    {
+        cout << "calculating stability matrix... " << endl;
+        cx_mat tore(Rho); tore.eye();
+        cx_mat ref(Rho); ref.zeros();
+        double dn=0.001;
+        RhoDot(Rho,ref,0.0);
+        int n=n_mo;
+        for (int j=0; j<n; ++j)
+        {
+            cx_mat tmp(Rho);
+            tmp(j,j)+=dn;
+            cx_mat tmp2(Rho); tmp2.zeros();
+            RhoDot(tmp,tmp2,0.0);
+            for (int i=0; i<n; ++i)
+            {
+                tore(i,j) += (tmp2(i,i)-ref(i,i))/dn;
+            }
+        }
+        tore.print("Rate Matrix:");
+        cout << "Rate Trace? " << trace(tore) << endl;
+        for (int j=0; j<n; ++j)
+            cout << "Normed Probability:" << j << " " << accu(tore.col(j)) << endl;
+        cx_mat sstates; cx_vec rates;
+        eig_gen(rates, sstates, tore);
+        rates.print("Rates:");
+        cout << "State sum: "<< accu(sstates.row(n-1)) << endl;
+        sstates.row(n-1).print("steady state");
+    }
+    
+    // Obtain the initial state for the dynamics.
+    void CorrelateInitial(cx_mat& Rho,cx_mat& V_)
+    {
+        cout << "Solving the RI-HF problem to ensure self-consistency." << endl;
+        double err=100.0;
+        int maxit = 400; int it=1;
+        while (abs(err) > pow(10.0,-10) && it<maxit)
+        {
+            cx_mat Rot = FockBuild(Rho,V_);
+            Rho = Rot.t()*Rho*Rot;
+            Rho.diag() *= 0.0;
+            err=accu(abs(Rho));
+            Rho.eye();
+            if (!params["ActiveSpace"])
+                Rho.submat(n_occ,n_occ,n_mo-1,n_mo-1)*=0.0;
+            else
+                Rho.submat(asp->ne,asp->ne,n-1,n-1) *= 0.0;
+            if (it%10==0)
+                cout << " Fock-Roothan: " << it << std::setprecision(9) << " Ehf" << Ehf << endl;
+            it++;
+        }
+        // Various options for non-idempotent initial state:
+        // gell-man-low, fermi-dirac, and mp2NO.
+        cx_mat Pmp2=MP2(Rho); // Won't actually solve for Pmp2 unless we want it. Otherwise just gets the CE.
+        if ((bool)params["GML"] && !params["Mp2NOGuess"])
+            GML(Rho,V_);
+        lambda = 1.0;
+        if (params["Mp2NOGuess"])
+        {
+            cout << "Generating MP2 1 particle density matrix..." << endl;
+            if (params["Mp2NOGuess"]==2.0)
+                Rho = diagmat(Pmp2);
+            else
+                Rho = Pmp2;
+        }
+        if (params["FD"])
+        {
+            vec pops(eigs.n_elem);
+            double EvPerAu=27.2113;
+            double Kb = 8.61734315e-5/EvPerAu;
+            double Beta = 1.0/(params["Temp"]*Kb);
+            cout << "Finding " << n_occ*2 << " Fermions at Beta " << Beta << endl;
+            double mu = eigs(n_occ);
+            
+            if (params["ActiveSpace"])
+            {
+                cout << "fd not working with AS yet." << endl;
+                throw;
+            }
+            
+            mu -= 0.010;
+            pops = 1.0/(1.0+exp(Beta*(eigs-mu)));
+            double sm = sum(pops);
+            mu += 0.020;
+            pops = 1.0/(1.0+exp(Beta*(eigs-mu)));
+            double sp = sum(pops);
+            // Linear fit for mu
+            mu = eigs(n_occ)-0.01 + ((0.02)/(sp-sm))*(n_occ - sm);
+            pops = 1.0/(1.0+exp(Beta*(eigs-mu)));
+            cout << "Populated with " << sum(pops) << " Fermions at mu = " << mu <<  endl;
+            
+            //Repeat
+            double dmu=0.001;
+            
+            while(abs(accu(pops)-n_occ)>pow(10.0,-10.0))
+            {
+                mu -= dmu;
+                pops = 1.0/(1.0+exp(Beta*(eigs-mu)));
+                sm = sum(pops);
+                mu += 2*dmu;
+                pops = 1.0/(1.0+exp(Beta*(eigs-mu)));
+                sp = sum(pops);
+                // Linear fit for mu
+                mu = mu-2.0*dmu + ((2.0*dmu)/(sp-sm))*(n_occ - sm);
+                pops = 1.0/(1.0+exp(Beta*(eigs-mu)));
+                cout << "Populated with " << accu(pops) << " Fermions at mu = " << mu <<  endl;
+                if ( abs(sum(pops)-n_occ) < pow(10.0,-10.0))
+                    break;
+                dmu /= max(min(10.0,abs(((2.0*dmu)/(sp-sm))*(n_occ - sm))),1.1);
+            }
+            
+            Rho.diag().zeros();
+            for (int i=0; i<n_mo; ++i)
+                if( abs(pops(i)) > pow(10.0,-16.0))
+                    Rho(i,i) = pops(i);
+            cout << "Populated with " << sum(pops) << " Fermions at mu = " << mu <<  endl;
+            Rho.diag().st().print("Rho(fd)");
+        }
+        if (params["InitialCondition"]==1)
+        {
+            if (!params["ActiveSpace"])
+            {
+            cx tmp = Rho(n_occ-1,n_occ-1);
+            Rho(n_occ,n_occ)+=tmp;
+            Rho(n_occ-1,n_occ-1)*=0.0;
+            }
+            else
+            {
+                cx tmp = Rho(asp->ne-1,asp->ne-1);
+                Rho(asp->ne,asp->ne)+=tmp;
+                Rho(asp->ne-1,asp->ne-1)*=0.0;
+            }
+        }
+        cout << "Initial Trace: " << trace(Rho) << endl;
+
+//        if (!params["RIFock"] && !params["ActiveSpace"])
+//            DebugRhoDot(Rho);
+        
+        eigs.st().print("Eigs Before Rebuild");
+        lambda = 1.0;
+        FockBuild(Rho,V_);
+        if (!params["RIFock"])
+            UpdateVi(V_);
+        eigs.st().print("Eigs After Rebuild");
+        return;
+    }
+    
+    // Print the initial Step, Density, Noccs, and DNoccs.
+    void DebugRhoDot(const cx_mat& Rho)
+    {
+        if (params["ActiveSpace"])
+            return;
+        Rho.diag().st().print("Inital Rho: ");
+        vec noccs; cx_mat u;
+        if(!eig_sym(noccs, u, Rho, "std"))
+        {
+            cout << "Warning... initial density did not diagonalize..." << endl;
+            return;
+        }
+        noccs.st().print("Initial natural occupations");
+        
+        // Check to see what effect the nonlinearity has...
+        cx_mat tmp(Rho),tmp2(Rho),tmp3(Rho); tmp.zeros(); tmp3.zeros();
+        tmp2.diag(1)+=0.0001;
+        tmp2.diag(-1)+=0.0001;
+        RhoDot(tmp2,tmp,1.0);
+        tmp2.diag(1)+=0.002;
+        tmp2.diag(-1)+=0.002;
+        RhoDot(tmp2,tmp3,3.0,0.0000000001);
+        
+        // Obtain the correction to a particle hole excitation energy.
+        cout << "-------------------------" << endl;
+        cx wks0 = eigs(n_occ)-eigs(n_occ-1);
+        cout << "Omega_hf 0: " << wks0 << " " << 27.2113*wks0 << "eV"<< endl;
+        cx ehbe(2.0*IntCur((n_occ)*n_mo+(n_occ),(n_occ-1)*n_mo+n_occ-1)-IntCur((n_occ)*n_mo+(n_occ-1),(n_occ)*n_mo+n_occ-1));
+        double cr=(imag(tmp(n_occ,n_occ-1)/0.0001));
+        cout << "E-H binding energy. " << ehbe << " " << 27.2113*ehbe << "eV"<< endl;
+        cout << "GS MP2 Correlation energy. " << Emp2 << " " << 27.2113*Emp2 << "eV"<< endl;
+        cout << "CIS Transition energy. " << ehbe << " " << 27.2113*(wks0+ehbe) << "eV"<< endl;
+        cout << "EE2 Correction: " << cr << " " << 27.2113*cr<< "eV"<< endl;
+        cout << "EE2 Correction (2): " << " " << 27.2113*(imag(tmp3(n_occ,n_occ-1)/0.002))<< "eV"<< endl;
+        cout << "-------------------------" << endl;
+        cout << " Total Estimated Homo Lumo xsition Energy: " << 27.2113*(cr+wks0+ehbe) << "eV"<< endl;
+        cout << " Total Estimated Homo Lumo xsition Energy+MP2: " << 27.2113*(cr+wks0+ehbe+Emp2) << "eV"<< endl;
+        cout << "-------------------------" << endl;
+        
+        vec dnoccs;
+        if(!eig_sym(dnoccs, u, Rho+0.02*tmp, "std"))
+        {
+            cout << "Warning... change in density did not diagonalize..." << endl;
+            return;
+        }
+        dnoccs -= noccs;
+        dnoccs.st().print("Initial NO change");
+        tmp.print("Initial RhoDot");
+    }
+    
+    // Finds the Chemical Potential, and then the best effective temperature to obtain pops.
+    // Based on the current eigs to obtain as close to pops as possible.
+    double EffectiveTemperature(const vec& pops)
+    {
+        if (n_occ+2 >= n_mo or n_occ-2<=0)
+            return 0.0;
+        cout << "Finding effective Temperature..."  << endl;
+        double EvPerAu=27.2113;
+        double Kb = 8.61734315e-5/EvPerAu;
+        vec reigs = real(eigs);
+        vec spops = sort(pops, "descend");
+        double dmu = pow(10.0,-3.0); double mui = reigs(n_occ-2); double muf = reigs(n_occ+2); // Assume the chemical potential is bw h-2,l+2
+        double hldiff =reigs(n_occ) - reigs(n_occ-1);
+        double dB = 10.0*hldiff;
+        double Bi=dB; double Bf=100.0/hldiff;
+        
+        double BestMu = 0.0;
+        double BestTemp = 0.0;
+        double BestError = n_occ;
+        
+        for(double mu=mui; mu<muf; mu+=dmu)
+        {
+            for(double Beta=Bi; Beta<Bf; Beta+=dB)
+            {
+                vec p = pow(exp(Beta*(reigs-mu))+1.0,-1.0);
+                double Error = accu((spops-p)%(spops-p));
+                if (Error != Error)
+                    Error = 8.0;
+                else if (Error < BestError)
+                {
+                    BestTemp=1.0/(Beta*Kb);
+                    BestMu=mu;
+                    BestError = Error;
+                }
+            }
+        }
+        double Beta = 1.0/(BestTemp*Kb);
+        cout << "Effective Temperature: " << BestTemp << " at mu= " << BestMu << " beta= " << Beta << " Fermi-Deviance " << sqrt(BestError) << endl;
+        vec p = pow(exp(Beta*(reigs-BestMu))+1.0,-1.0);
+        (p-spops).st().print("Deviation From Thermality.");
+        return BestTemp;
+    }
+    
+    // Calculate the MP2 energy and opdm blockwise in the fock eigenbasis to avoid singles.
+    // Use this as a density guess for the dynamics.
+    // Since HF is probably very far from the desired initial state
+    cx_mat MP2(cx_mat& RhoHF)
+    {
+        if (params["ActiveSpace"])
+        {
+            cout << "PlaceholderXXYXYX" << endl;
+            return RhoHF;
+        }
+        
+        typedef std::complex<double> cx;
+        
+        int n1=nv;
+        int n2=nv*n1;
+        int n3=n2*no;
+        int n4=no*n3;
+        std::vector<cx> Vs(n4),T(n4);
+        std::fill(Vs.begin(), Vs.end(), std::complex<double>(0.0,0.0));
+        std::fill(T.begin(), T.end(), std::complex<double>(0.0,0.0));
+        
+        cx_mat d2 = Delta2();
+        for(int R=0; R<n_aux; ++R)
+        {
+            cx_mat B = V.t()*BpqR.slice(R)*V;
+            for (int i=0; i<no; ++i)
+            {
+                for (int j=0; j<no; ++j)
+                {
+                    for (int a=0; a<nv; ++a)
+                    {
+                        for (int b=0; b<nv; ++b)
+                        {
+                            Vs[i*n3+j*n2+a*n1+b] += B(i,a+no)*B(j,b+no);
+                        }
+                    }
+                }
+            }
+        }
+        
+        Emp2=0.0;
+        for (int i=0; i<no; ++i)
+        {
+            for (int j=0; j<no; ++j)
+            {
+                for (int a=0; a<nv; ++a)
+                {
+                    for (int b=0; b<nv; ++b)
+                    {
+                        T[i*n3+j*n2+a*n1+b] = (2*Vs[i*n3+j*n2+a*n1+b] - Vs[i*n3+j*n2+b*n1+a])/(d2(a+no,i)+d2(b+no,j));
+                        //                        cout << "ijab2" << i << j << a << b << Vs[i*n3+j*n2+a*n1+b] << " " << real(T[i*n3+j*n2+a*n1+b]*Vs[i*n3+j*n2+a*n1+b]) << endl;
+                        Emp2 += real(T[i*n3+j*n2+a*n1+b]*Vs[i*n3+j*n2+a*n1+b]);
+                    }
+                }
+            }
+        }
+        cout << std::setprecision(9) << "Mp2 Correlation energy: " << Emp2 << endl;
+        
+        cx_mat Poo(no,no); Poo.zeros();
+        cx_mat Pvv(nv,nv); Pvv.zeros();
+        cx_mat Pov(no,no); Pov.zeros();
+        cx_mat Pmp2(RhoHF);
+        
+        if (params["Mp2NOGuess"])
+        {
+            // Now make the PDMs.
+            // I'm taking these from JCC Ishimura, Pulay, and Nagase
+            // and CPL 166,3 Frisch, HG, Pople.
+            for (int i=0; i<no; ++i)
+            {
+                for (int j=0; j<no; ++j)
+                {
+                    for (int k=0; k<no; ++k)
+                    {
+                        for (int a=0; a<nv; ++a)
+                        {
+                            for (int b=0; b<nv; ++b)
+                            {
+                                Poo(i,j) -= 2.0*T[i*n3+k*n2+a*n1+b]*Vs[j*n3+k*n2+a*n1+b]/(d2(a+no,k)+d2(b+no,j));
+                            }
+                        }
+                    }
+                }
+            }
+            
+            for (int i=0; i<no; ++i)
+            {
+                for (int j=0; j<no; ++j)
+                {
+                    for (int c=0; c<nv; ++c)
+                    {
+                        for (int a=0; a<nv; ++a)
+                        {
+                            for (int b=0; b<nv; ++b)
+                            {
+                                Pvv(a,b) += 2.0*T[i*n3+j*n2+a*n1+c]*Vs[i*n3+j*n2+b*n1+c]/(d2(b+no,i)+d2(c+no,j));
+                            }
+                        }
+                    }
+                }
+            }
+            cout << "Tr(oo) " << trace(Poo) << " Tr(vv)" << trace(Pvv) << endl;
+            
+            // finally do the lag. pieces.
+            // Which require new integrals. (-_-)
+            cx_mat Lai(nv,no); Lai.zeros();
+            for(int R=0; R<n_aux; ++R)
+            {
+                cx_mat B = V.t()*BpqR.slice(R)*V;
+                for (int i=0; i<no; ++i)
+                {
+                    for (int j=0; j<no; ++j)
+                    {
+                        for (int a=0; a<nv; ++a)
+                        {
+                            for (int b=0; b<nv; ++b)
+                            {
+                                for (int k=0; k<no; ++k)
+                                {
+                                    Lai(a,i) += Poo(j,k)*(4.0*B(i,a+no)*B(j,k)-2.0*B(i,k)*B(a+no,j));
+                                    Lai(a,i) -= 4.0*T[j*n3+k*n2+a*n1+b]*B(i,j)*B(k,b+no);
+                                }
+                                for (int c=0; c<nv; ++c)
+                                {
+                                    Lai(a,i) += Pvv(b,c)*(4.0*B(i,a+no)*B(b+no,c+no)-2.0*B(i,b+no)*B(a+no,c+no));
+                                    Lai(a,i) += 4.0*T[i*n3+j*n2+b*n1+c]*B(a+no,b+no)*B(j,c+no);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Lai.print("Lai");
+            // Solve the z-vector equation by iteration.
+            // The equation has the form:
+            // DP + L + VP = 0
+            // Initalize P = L/D
+            // Then calculate residual R = -L - VP
+            // Then P = -R/D. Iterate.
+            double dP=1.0; int iter=100;
+            cx_mat dvo=d2.submat(no,0,n-1,no-1);
+            cx_mat Pbj=-1.0*Lai/dvo;
+            //        dvo.print("dvo");
+            //        Pbj.print("Pbj0");
+            cx_mat R(Pbj); R.zeros();
+            while(dP>pow(10.0,-8.0) && iter>0)
+            {
+                // Calculate R.
+                R = -1.0*Lai;
+                for(int S=0; S<n_aux; ++S)
+                {
+                    cx_mat B = V.t()*BpqR.slice(S)*V;
+                    for (int i=0; i<no; ++i)
+                    {
+                        for (int j=0; j<no; ++j)
+                        {
+                            for (int a=0; a<nv; ++a)
+                            {
+                                for (int b=0; b<nv; ++b)
+                                {
+                                    R(a,i) -= ( 4.0*B(a+no,i)*B(b+no,j)-B(a+no,j)*B(b+no,i)-B(a+no,b+no)*B(i,j) )*Pbj(b,j);
+                                }
+                            }
+                        }
+                    }
+                }
+                dP = accu(abs(Pbj-R/dvo));
+                Pbj = R/dvo;
+                cout << "Z-Iter:" << 100-iter << " dP: " << dP << endl;
+                //            Pbj.print("Pbj");
+                iter--;
+            }
+            Poo.print("Poo");
+            Pvv.print("Pvv");
+            Pmp2.submat(0,0,no-1,no-1) += Poo;
+            Pmp2.submat(no,no,n-1,n-1) += Pvv;
+            Pmp2.submat(0,no,no-1,n-1) += Pbj.t();
+            Pmp2.submat(no,0,n-1,no-1) += Pbj;
+            Pmp2.print("Pmp2");
+        }
+        return Pmp2;
+    }
+    
+    // Just to see if this is faster than Job 32...
+    // Rho is passed in the fock eigenbasis.
+    // F is built in the lowdin basis,
+    // then transformed into the fock eigenbasis and diagonalized.
+    cx_mat FockBuild(cx_mat& Rho, cx_mat& V_, bool debug=false)
+    {
+        if (!B_Built)
+        {
+            cout << "cannot build fock without B" << endl;
+            return Rho;
+        }
+        if (!params["ActiveSpace"])
+        {
+            mat Xt = X.t();
+            cx_mat Vt = V.t();
+            F.resize(Rho.n_rows,Rho.n_cols); F.zeros();
+            mat J(Rho.n_rows,Rho.n_cols); J.zeros();
+            cx_mat K(Rho); K.zeros();
+            cx_mat Rhol = V*Rho*Vt; // Get Rho into the lowdin basis for the fock build.
+            mat h = 2.0*(Xt)*(H)*X; // h is stored in the ao basis.
+            F.set_real(h);
+            
+#if HASUDR
+#pragma omp declare reduction( + : cx_mat : \
+    std::transform(omp_in.begin( ),  omp_in.end( ),  omp_out.begin( ), omp_out.begin( ),  std::plus< std::complex<double> >( )) ) initializer (omp_priv(omp_orig))
+            
+#pragma omp declare reduction( + : mat : \
+    std::transform(omp_in.begin( ),  omp_in.end( ),  omp_out.begin( ), omp_out.begin( ),  std::plus< double >( )) ) initializer (omp_priv(omp_orig))
+#endif
+            
+            cx_mat Rhot=Rhol.t();
+            
+#if HASUDR
+#pragma omp parallel for reduction(+:J,K) schedule(static)
+#endif
+            
+            // Fock build should be done in prev eigenbasis instead...
+            for (int R=0; R<n_aux; ++R)
+            {
+                mat B=BpqR.slice(R);
+                mat I1=real(Rhol%B); // Because Rho is hermitian and B is hermitian only the real part of this matrix should actually contribute to J
+                J += 2.0*B*accu(I1); // J should be a Hermitian matrix.
+                K -= B*(Rhot)*B;
+            }
+            
+            F = 0.5*h + J + K;
+            F = Vt*F*V;    // Move it back into the Prev eigenbasis.
+            cx_mat Jx = Vt*J*V;    // Move it back into the Prev eigenbasis.
+            cx_mat hx = Vt*h*V;    // Move it back into the Prev eigenbasis.
+            K = Vt*K*V;    // Move it back into the Prev eigenbasis.
+            
+//            Jx.print("EbJ");
+//            K.print("EbK");
+            
+            F = 0.5*(F+F.t());
+            
+            double Eone= real(trace(Rho*hx));
+            double EJ= real(trace(Rho*Jx));
+            double EK= real(trace(Rho*K));
+            Ehf = Eone + EJ + EK + nuclear_energy;
+            
+            cx_mat Vprime; eigs.zeros();
+            if (!eig_sym(eigs, Vprime, F))
+            {
+                cout << "eig_sym failed to diagonalize fock matrix ... " << endl;
+                throw 1;
+            }
+            
+            if (params["Print"]>0.0)
+            {
+                cout << std::setprecision(9) << endl;
+                Rhol.print("Rhol");
+                cout << "HF Energy" << Ehf << endl;
+                cout << "One Energy" << Eone << endl;
+                cout << "J Energy" << EJ << endl;
+                cout << "K Energy" << EK << endl;
+                cout << "nuclear_energy " << nuclear_energy << endl << endl;
+                eigs.st().print("Eigs");
+            }
+            
+            V_ = V = V*Vprime;
+            C = X*V;
+            return Vprime;
+        }
+        else
+        {
+            // Build in the original Fock basis. to save on B?
+            mat Xt = X.t();
+            cx_mat Vt = V.t();
+            cx_mat Vst = asp->Vs.t();
+            F.resize(n_mo,n_mo); F.zeros();
+            mat J(n_mo,n_mo); J.zeros();
+            cx_mat K(n_mo,n_mo); K.zeros();
+            cx_mat Rhol = asp->Vs*Rho*Vst+asp->P0cx; // Get Rho into the lowdin basis for the fock build.
+            mat h = 2.0*(Xt)*(H)*X; // h is stored in the ao basis.
+            F.set_real(h);
+            
+#if HASUDR
+#pragma omp declare reduction( + : cx_mat : \
+std::transform(omp_in.begin( ),  omp_in.end( ),  omp_out.begin( ), omp_out.begin( ),  std::plus< std::complex<double> >( )) ) initializer (omp_priv(omp_orig))
+            
+#pragma omp declare reduction( + : mat : \
+std::transform(omp_in.begin( ),  omp_in.end( ),  omp_out.begin( ), omp_out.begin( ),  std::plus< double >( )) ) initializer (omp_priv(omp_orig))
+#endif
+            
+            cx_mat Rhot=Rhol.t();
+            
+#if HASUDR
+#pragma omp parallel for reduction(+:J,K) schedule(static)
+#endif
+            // Note that I will wastefully make the entire fock matrix for AS. this should be fixed.
+            for (int R=0; R<n_aux; ++R)
+            {
+                mat B=BpqR.slice(R);
+                mat I1=real(Rhol%B); // Because Rho is hermitian and B is hermitian only the real part of this matrix should actually contribute to J
+                J += 2.0*B*accu(I1); // J should be a Hermitian matrix.
+                K -= B*(Rhot)*B;
+            }
+            
+            F = 0.5*h + J + K;
+            cx_mat Fs = Vst*F*(asp->Vs);    // Move it back into the Prev eigenbasis.
+            F = 0.5*(F+F.t()); // F now has dim Nact X Nact
+            
+            double Eone= real(trace(Rhol*h));
+            double EJ= real(trace(Rhol*J));
+            double EK= real(trace(Rhol*K));
+            Ehf = Eone + EJ + EK + nuclear_energy;
+            
+            cx_mat Vprime; eigs.zeros();
+            if (!eig_sym(eigs, Vprime, Fs))
+            {
+                cout << "eig_sym failed to diagonalize fock matrix ... " << endl;
+                throw 1;
+            }
+            
+            if (params["Print"]>0.0)
+            {
+                cout << std::setprecision(9) << endl;
+                cout << "HF Energy" << Ehf << endl;
+                cout << "One Energy" << Eone << endl;
+                cout << "J Energy" << EJ << endl;
+                cout << "K Energy" << EK << endl;
+                cout << "nuclear_energy " << nuclear_energy << endl << endl;
+                eigs.st().print("Eigs");
+            }
+            
+            cx_mat Vprimeb(n_mo,n_mo); Vprimeb.eye(); // Big basis's rotation.
+            Vprimeb.submat(asp->ActiveFirst,asp->ActiveFirst,asp->ActiveLast,asp->ActiveLast) = Vprime;
+            
+            V_ = V = V*Vprimeb;
+            asp->Vs = asp->Vs*Vprime;
+            
+            C = X*V;
+            asp->Csub = X*asp->Vs;
+            return Vprime;
+        }
+    }
+    
+    cx_mat Delta2(bool Sign=true)
+    {
+        if (eigs.n_elem == 0)
+            cout << "Err.." << endl;
+        cx_mat tore(eigs.n_elem,eigs.n_elem);
+        for(int i=0; i<eigs.n_elem; ++i)
+            for(int j=0; j<eigs.n_elem; ++j)
+                tore(i,j) = (Sign)? (eigs(i) - eigs(j)) : eigs(i) + eigs(j);
+        tore.diag().zeros();
+        return tore;
+    }
+    
+    // Updates BpqR
+    void BuildB()
+    {
+        cout << "Building B..." << endl;
+        if (!params["ActiveSpace"])
+        {
+            FileMan(FM_WRITE, FILE_MO_COEFS, FM_DP, n_mo*n_mo, 0, FM_BEG, X.memptr(), 0); // B is now built in the Lowdin basis and kept that way.
+            BpqR*=0.0;
+            mat Btmp(n_mo,n_aux);
+            INTEGER ip[2], iq[2], iFile;
+            iq[0] = 1; iq[1] = n_mo;
+            ip[0] = 1; ip[1] = n_mo;
+            int p_len = ip[1]-ip[0]+1;
+            int q_len = iq[1]-iq[0]+1;
+            iFile = FILE_3C2Ea_INTS;
+            threading_policy::enable_omp_only();
+            
+            double* qas=qalloc_start();
+            int LenV = megtot();
+            formpqr(&iFile, iq, ip, qas, &LenV);
+            threading_policy::pop();
+            cout << "FormedPQR..." << endl;
+            // Effn' qchem and its BS disk communication...
+            // ($*%(*$%*@(@(*
+            int fileNum = FILE_BIJQa_INTS;
+            for (int q=0; q<q_len; q++)
+            {
+                int Off8 = q * p_len * n_aux; Btmp *= 0.0;
+                LongFileMan(FM_READ, FILE_3C2Ea_INTS, FM_DP, p_len*n_aux, Off8, FM_BEG, Btmp.memptr(), 0);
+                // Q.subcube( first_row, first_col, first_slice, last_row, last_col, last_slice )
+                BpqR.subcube(q,0,0,q,n_mo-1,n_aux-1) += Btmp*RSinv;
+            }
+            // Ensure B is perfectly Hermitian.
+            for (int R=0; R<n_aux; ++R)
+                BpqR.slice(R) = 0.5*(BpqR.slice(R)+BpqR.slice(R).t());
+            if (false)
+            {
+                // This works! Keeping it in as a check for now.
+                double* f_diag = new double[n_mo];
+                FileMan(FM_READ, FILE_MO_COEFS, FM_DP, n_mo, n_mo*n_mo*2 , FM_BEG, f_diag, 0);
+                std::complex<double> ECorr = 0.0;
+                cx_mat Vt = V.t();
+                for (int R=0; R<n_aux; ++R)
+                {
+                    cx_mat bR = Vt*BpqR.slice(R)*V;
+                    for (int S=0; S<n_aux; ++S)
+                    {
+                        cx_mat bS = Vt*BpqR.slice(S)*V;
+                        for (int i=0; i<n_occ; ++i)
+                            for (int j=0; j<n_occ; ++j)
+                                for (int a=n_occ; a<n_mo; ++a)
+                                    for (int b=n_occ; b<n_mo; ++b)
+                                    {
+                                        double d = (f_diag[a]+f_diag[b]-f_diag[i]-f_diag[j]);
+                                        {
+                                            ECorr += bR(i,a)*bR(j,b)*(2.0*bS(i,a)*bS(j,b) - bS(i,b)*bS(j,a))/d;
+                                        }
+                                    }
+                    }
+                }
+                cout << "Mp2 Correlation Energy: " << std::setprecision(9) << ECorr << endl;
+            }
+            B_Built = true;
+            cout << "BpqR built ..." << endl;
+        }
+
+    }
+    
+    bool cx_mat_equals(const arma::cx_mat& X,const arma::cx_mat& Y, double tol=pow(10.0,-12.0)) const
+    {
+        if (X.n_rows != Y.n_rows)
+            return false;
+        if (X.n_cols != Y.n_cols)
+            return false;
+        bool close(false);
+        if(arma::max(arma::max(arma::abs(X-Y))) < tol)
+            close = true;
+        return close;
+    }
+    
+    void UpdateVi(const cx_mat& V_)
+    {
+        if (params["Print"])
+            cout << "UpdateVi" << endl;
+        if (cx_mat_equals(V_,VCur))
+            return;
+        cx_mat Vi(IntCur.memptr(),n2,n2,false,true); Vi.zeros(); // Vi literally uses the memory of IntCur. This gets around OMP spec issues.
+        
+        if (InCore)
+        {
+#if HASUDR
+#pragma omp declare reduction( + : cx_mat : \
+std::transform(omp_in.begin( ),  omp_in.end( ),  omp_out.begin( ), omp_out.begin( ),  std::plus< std::complex<double> >( )) ) initializer (omp_priv(omp_orig))
+            
+#pragma omp parallel for reduction(+: Vi) schedule(static)
+#endif
+            for(int R=0; R<n_aux; ++R)
+            {
+                cx_mat B;
+                if (params["ActiveSpace"])
+                    B = (asp->Vs).t()*BpqR.slice(R)*(asp->Vs); // No need to xform 5 times/iteration. I could do this once for a 5x speedup.
+                else
+                    B = V_.t()*BpqR.slice(R)*V_; // No need to xform 5 times/iteration. I could do this once for a 5x speedup.
+                Vi += kron(B,B).st();
+                B.clear();
+            }
+        }
+        else
+        {
+            for(int R=0; R<n_aux; ++R)
+            {
+                cx_mat B;
+                if (params["ActiveSpace"])
+                    B = (asp->Vs).t()*BpqR.slice(R)*(asp->Vs); // No need to xform 5 times/iteration. I could do this once for a 5x speedup.
+                else
+                    B = V_.t()*BpqR.slice(R)*V_; // No need to xform 5 times/iteration. I could do this once for a 5x speedup.
+                // Manually OMP the kron to avoid memory death.
+#pragma omp parallel for schedule(guided)
+                for(int p=0; p<n; ++p)
+                {
+                    for(int q=0; q<n; ++q)
+                    {
+                        cx A = B(p,q);
+                        if (abs(A) < thresh)
+                            continue;
+                        for(int r=0; r<n; ++r)
+                        {
+                            for(int s=0; s<n; ++s)
+                            {
+                                Vi(p*r,q*s) += A*B(r,s);
+                            }
+                        }
+                    }
+                }
+                B.clear();
+            }
+        }
+        /*
+         for(int p=0; p<n_mo; ++p)
+         {
+         for(int q=0; q<n_mo; ++q)
+         {
+         for(int r=0; r<n_mo; ++r)
+         {
+         for(int s=0; s<n_mo; ++s)
+         {
+         cout << "v1" << IntCur[p*n3+q*n2+r*n+s] << IntCur[r*n3+s*n2+p*n+q] << endl;
+         }
+         }
+         }
+         }
+         
+         // Check the integrals.
+         cx_mat d2 = Delta2();
+         Emp2=0.0;
+         for (int i=0; i<no; ++i)
+         {
+         for (int j=0; j<no; ++j)
+         {
+         for (int a=no; a<n; ++a)
+         {
+         for (int b=no; b<n; ++b)
+         {
+         cout << "ijab" << i << j << a << b << IntCur[i*n3+j*n2+a*n+b] << "::" << real(IntCur[i*n3+j*n2+a*n+b]*(2*IntCur[i*n3+j*n2+a*n+b] - IntCur[i*n3+j*n2+b*n+a])/(d2(a,i)+d2(b,j))) << endl;
+         Emp2 += real(IntCur[i*n3+j*n2+a*n+b]*(2*IntCur[i*n3+j*n2+a*n+b] - IntCur[i*n3+j*n2+b*n+a])/(d2(a,i)+d2(b,j)));
+         }
+         }
+         }
+         }
+         cout << std::setprecision(9) << "Mp2 Correlation energy: " << Emp2 << endl;
+         */
+        VCur = V_;
+        if (params["Print"])
+            cout << "~UpdateVi" << endl;
+    }
+    
+    void Split_RK4_Step_MMUT(const arma::vec& eigval, const arma::cx_mat& Cu , const arma::cx_mat& oldrho, arma::cx_mat& newrho, const double tnow, const double dt)
+    {
+        cx_mat Ud = exp(eigval*-0.5*j*dt);
+        cx_mat U = Cu*diagmat(Ud)*Cu.t();
+        cx_mat RhoHalfStepped = U*oldrho*U.t();
+        
+        arma::cx_mat k1(newrho),k2(newrho),k3(newrho),k4(newrho),v2(newrho),v3(newrho),v4(newrho);
+        k1.zeros(); k2.zeros(); k3.zeros(); k4.zeros();
+        v2.zeros(); v3.zeros(); v4.zeros();
+        
+        RhoDot( RhoHalfStepped, k1,tnow);
+        v2 = (dt/2.0) * k1;
+        v2 += RhoHalfStepped;
+        RhoDot(  v2, k2,tnow+(dt/2.0));
+        v3 = (dt/2.0) * k2;
+        v3 += RhoHalfStepped;
+        RhoDot(  v3, k3,tnow+(dt/2.0));
+        v4 = (dt) * k3;
+        v4 += RhoHalfStepped;
+        RhoDot(  v4, k4,tnow+dt);
+        newrho = RhoHalfStepped;
+        newrho += dt*(1.0/6.0)*k1;
+        newrho += dt*(2.0/6.0)*k2;
+        newrho += dt*(2.0/6.0)*k3;
+        newrho += dt*(1.0/6.0)*k4;
+        newrho = U*newrho*U.t();
+    }
+    
+    
+    // Two mmut steps of length dt/2 and one ee2 step (calc'd with RK4)
+    double step(rhf* the_scf, FieldMatrices* Mus, arma::vec& eigs_, arma::cx_mat& V_,  arma::cx_mat& Rho_, arma::cx_mat& RhoM12_, const double tnow , const double dt,bool& IsOn)
+    {
+        if (params["BBGKY"])
+        {
+            return BBGKYstep( the_scf,  Mus, eigs_, V_, Rho_, RhoM12_, tnow , dt, IsOn);
+        }
+        else if (params["StaticStep"])
+        {
+            // No constant transformation based off what I learned about stability of BBGKY
+            // MP partitioning is fixed at T=0
+            return StaticStep( the_scf,  Mus, eigs_, V_, Rho_, RhoM12_, tnow , dt, IsOn);
+        }
+        
+        if (params["Print"])
+            cout << "step" << endl;
+        cx_mat newrho(Rho_);
+        cx_mat Rot = FockBuild(Rho_, V_); // updates eigs, C, V, F, etc. etc. etc.
+        if (!params["RIFock"])
+            UpdateVi(V_); // Updates CurrInts to avoid rebuilds in the steps that follow.
+        
+        vec noc0; cx_mat nos0;
+        if (params["Print"]>0.0)
+            eig_sym(noc0,nos0,Rho_);
+        
+        eigs_ = eigs;
+        if (!params["ActiveSpace"])
+            Mus->update(X*V_);
+        else
+            Mus->update(X*asp->Csub);
+        Rho_ = Rot.t()*Rho_*Rot;
+        RhoM12_ = Rot.t()*RhoM12_*Rot;
+        
+        // Make the exponential propagator.
+        arma::cx_mat F(Rho_); F.zeros(); F.set_real(diagmat(eigs));
+        if (Mus!=NULL)
+            Mus->ApplyField(F,tnow,IsOn);
+        vec Gd; cx_mat Cu;
+        eig_sym(Gd,Cu,F);
+        
+        // Full step RhoM12 to make new RhoM12.
+        cx_mat NewRhoM12(Rho_);
+        cx_mat NewRho(Rho_);
+        Split_RK4_Step_MMUT(Gd, Cu, RhoM12_, NewRhoM12, tnow, dt);
+        
+        // Half step that to make the new Rho.
+        Split_RK4_Step_MMUT(Gd, Cu, NewRhoM12, NewRho, tnow, dt/2.0);
+        Rho_ = 0.5*(NewRho+NewRho.t());//0.5*(NewRho+NewRho.t());
+        RhoM12_ = 0.5*(NewRhoM12+NewRhoM12.t());//0.5*(NewRhoM12+NewRhoM12.t());
+        
+        //Epseudo=real(RhoDot(Rho_, NewRho, tnow));
+        
+        // Get the change in noccs.
+        if (params["Print"]>1.0)
+        {
+            vec noc1; cx_mat nos1;
+            eig_sym(noc1,nos1,Rho_);
+            noc1-=noc0;
+            noc1.st().print("Delta N-Occ Nums: ");
+        }
+        if (params["Print"])
+            cout << "~step" << endl;
+        
+        return Ehf;
+    }
+    
+    // The updates are done in spin-orbital form. and l2 is stored in spin-orbital form.
+    // However rho is returned spin-adapted. It's the fewest lines of code way to get that done.
+    double BBGKYstep(rhf* the_scf, FieldMatrices* Mus, arma::vec& eigs_, arma::cx_mat& V_,  arma::cx_mat& Rho_, arma::cx_mat& RhoM12_, const double tnow , const double dt,bool& IsOn)
+    {
+        if (params["Print"])
+            cout << "BBGKY step" << endl;
+
+        // Make the exponential propagator for fock and dipole parts.
+        mat Xt = X.t();
+        cx_mat Vt = V.t();
+        mat h = (Xt)*(H)*X;
+
+        cx_mat hmu = Vt*h*V;
+        if(Mus!=NULL)
+            Mus->ApplyField(hmu,tnow,IsOn);
+        vec Gd; cx_mat Cu;
+        eig_sym(Gd,Cu,hmu);
+        cx_mat Ud = exp(Gd*-0.5*j*dt);
+        cx_mat U = Cu*diagmat(Ud)*Cu.t();
+        cx_mat RhoHalfStepped = U*Rho_*U.t();
+        
+        BuildSpinOrbitalV();
+
+        cx_mat newrho(Rho_); newrho.zeros();
+        // one body step.
+        {
+            arma::cx_mat k1(newrho),k2(newrho),k3(newrho),k4(newrho),v2(newrho),v3(newrho),v4(newrho);
+            k1.zeros(); k2.zeros(); k3.zeros(); k4.zeros();
+            v2.zeros(); v3.zeros(); v4.zeros();
+            
+            bbgky1( RhoHalfStepped, k1,tnow);
+            v2 = (dt/2.0) * k1;
+            v2 += RhoHalfStepped;
+
+            bbgky1(  v2, k2,tnow+(dt/2.0));
+            v3 = (dt/2.0) * k2;
+            v3 += RhoHalfStepped;
+
+            bbgky1(  v3, k3,tnow+(dt/2.0));
+            v4 = (dt) * k3;
+            v4 += RhoHalfStepped;
+
+            bbgky1(  v4, k4,tnow+dt);
+            newrho = RhoHalfStepped;
+            newrho += dt*(1.0/6.0)*k1;
+            newrho += dt*(2.0/6.0)*k2;
+            newrho += dt*(2.0/6.0)*k3;
+            newrho += dt*(1.0/6.0)*k4;
+        }
+        // Two-body step.
+        if (!params["BBGKY1"])
+        {
+            Transform2(r2,U);
+            
+            arma::cx_mat k1(r2),k2(r2),k3(r2),k4(r2),v2(r2),v3(r2),v4(r2);
+            k1.zeros(); k2.zeros(); k3.zeros(); k4.zeros();
+            v2.zeros(); v3.zeros(); v4.zeros();
+            
+            bbgky2( r2, k1,tnow);
+            v2 = (dt/2.0) * k1;
+            v2 += r2;
+            bbgky2(  v2, k2,tnow+(dt/2.0));
+            v3 = (dt/2.0) * k2;
+            v3 += r2;
+            bbgky2(  v3, k3,tnow+(dt/2.0));
+            v4 = (dt) * k3;
+            v4 += r2;
+            bbgky2(  v4, k4,tnow+dt);
+            r2 += dt*(1.0/6.0)*k1;
+            r2 += dt*(2.0/6.0)*k2;
+            r2 += dt*(2.0/6.0)*k3;
+            r2 += dt*(1.0/6.0)*k4;
+            
+            Transform2(r2,U);
+        }
+        
+        Rho_ = U*newrho*U.t();
+        RhoM12_ = U*newrho*U.t();
+     //   TracedownConsistency(Rho_,r2); // Ensures the separable part = Rho at all times.
+        CorrelatedEnergy(r2);
+
+        return Ehf;
+    }
+
+    // Do the eigenvalue build once and then fix them.
+    // That's basically the Tamm-dancoff approximation.
+    double StaticStep(rhf* the_scf, FieldMatrices* Mus, arma::vec& eigs_, arma::cx_mat& V_,  arma::cx_mat& Rho_, arma::cx_mat& RhoM12_, const double tnow , const double dt,bool& IsOn)
+    {
+        // Make the exponential propagator for fock and dipole parts.
+        mat Xt = X.t();
+        cx_mat Vt = V.t();
+        mat h = (Xt)*(H)*X;
+        cx_mat hmu = Vt*h*V;
+        if(Mus!=NULL)
+            Mus->ApplyField(hmu,tnow,IsOn);
+        FockBuildNoRotation(Rho_, hmu, tnow);
+        vec Gd; cx_mat Cu;
+        eig_sym(Gd,Cu,hmu);
+        cx_mat Ud = exp(Gd*-0.5*j*dt);
+        cx_mat U = Cu*diagmat(Ud)*Cu.t();
+        cx_mat RhoHalfStepped = U*Rho_*U.t();
+        
+        cx_mat newrho(Rho_); newrho.zeros();
+        // one body step.
+        {
+            arma::cx_mat k1(newrho),k2(newrho),k3(newrho),k4(newrho),v2(newrho),v3(newrho),v4(newrho);
+            k1.zeros(); k2.zeros(); k3.zeros(); k4.zeros();
+            v2.zeros(); v3.zeros(); v4.zeros();
+            
+            RhoDot( RhoHalfStepped, k1,tnow);
+            v2 = (dt/2.0) * k1;
+            v2 += RhoHalfStepped;
+            
+            RhoDot(  v2, k2,tnow+(dt/2.0));
+            v3 = (dt/2.0) * k2;
+            v3 += RhoHalfStepped;
+            
+            RhoDot(  v3, k3,tnow+(dt/2.0));
+            v4 = (dt) * k3;
+            v4 += RhoHalfStepped;
+            
+            RhoDot(  v4, k4,tnow+dt);
+            newrho = RhoHalfStepped;
+            newrho += dt*(1.0/6.0)*k1;
+            newrho += dt*(2.0/6.0)*k2;
+            newrho += dt*(2.0/6.0)*k3;
+            newrho += dt*(1.0/6.0)*k4;
+        }
+        
+        Rho_ = U*newrho*U.t();
+        RhoM12_ = U*newrho*U.t();
+        
+        return Ehf;
+    }
+    
+    void BuildSpinOrbitalV()
+    {
+        cx* Vi = IntCur.memptr();
+
+        // Alpha (0,n) Beta (n,2n) Ordering.
+        Vso.resize(4*n2,4*n2);
+        Vso.zeros();
+        cx* vso = Vso.memptr();
+        int s1,s2,s3,s4;
+        int P,Q,R,S;
+        
+        for (int p=0;p<tn;++p)
+            for (int q=0;q<tn;++q)
+                for (int r=0;r<tn;++r)
+                    for (int s=0;s<tn;++s)
+                    {
+                        s1=p<n;s2=q<n;s3=r<n;s4=s<n;
+                        P=p%n; Q=q%n; R=r%n; S=s%n;
+                        if ((s1!=s3) || (s2!=s4))
+                            continue;
+                        vso[tn3*p+tn2*q+tn*r+s] = Vi[P*n3+Q*n2+R*n+S];
+                    }
+        
+    }
+
+    bool delta(int p,int q)
+    {
+        if (p==q)
+            return true;
+        return false;
+    }
+    
+    void CorrelatedEnergy(cx_mat& R2)
+    {
+        cx* vso = Vso.memptr();
+        cx* r2 = R2.memptr();
+        cx_mat Hso(Vso); Hso.zeros();
+        cx_mat hso(Vso); hso.zeros();
+        mat Xt = X.t();
+        cx_mat Vt = V.t();
+        mat h = (Xt)*(H)*X;
+        cx_mat Htmp = Vt*h*V;
+        hso.submat(0,0,n-1,n-1) = Htmp;
+        hso.submat(n,n,tn-1,tn-1) = Htmp;
+        
+        cx_mat hmu = Vt*h*V;
+        for (int p=0;p<tn;++p)
+            for (int q=0;q<tn;++q)
+                for (int r=0;r<tn;++r)
+                    for (int s=0;s<tn;++s)
+                    {
+                        Hso[tn3*p+tn2*q+tn*r+s] = (1.0/(2.0*no-1.0))*(hso(p,r)*delta(q,s)+hso(q,s)*delta(p,r)-hso(p,s)*delta(q,r)-hso(q,r)*delta(p,s)) + vso[tn3*p+tn2*q+tn*r+s] - vso[tn3*p+tn2*q+tn*r+s];
+                    }
+        
+        cx En(0.0,0.0);
+        for (int p=0;p<tn;++p)
+            for (int q=0;q<tn;++q)
+                for (int r=0;r<tn;++r)
+                    for (int s=0;s<tn;++s)
+                        En += 0.25*(Hso[tn3*p+tn2*q+tn*r+s]*r2[tn3*r+tn2*s+tn*p+q]);
+        cout << "Energy of Reduced hamiltonian: " << En + nuclear_energy << endl;
+        
+    }
+    
+    // Argument is singlet spin-adapted.
+    void Separabler2(const cx_mat Rho)
+    {
+        r2.resize(4*n2,4*n2);r2.zeros();
+        cx_mat rso(tn,tn); rso.zeros();
+        rso.submat(0,0,n-1,n-1) = Rho;
+        rso.submat(n,n,tn-1,tn-1) = Rho;
+#pragma omp parallel for
+        for (int p=0;p<tn;++p)
+        {
+            for (int q=0;q<tn;++q)
+            {
+                for (int r=0;r<tn;++r)
+                {
+                    for (int s=0;s<tn;++s)
+                    {
+                        r2[p*tn3+q*tn2+r*tn+s] = rso(p,r)*rso(q,s)-rso(q,r)*rso(p,s);
+                    }
+                }
+            }
+        }
+        
+        cx twotrace1(0.0,0.0),twotrace2(0.0,0.0);
+        for (int p=0;p<tn;++p)
+        {
+            for (int q=0;q<tn;++q)
+            {
+                if(abs( r2[p*tn3+q*tn2+p*tn+q]+r2[p*tn3+q*tn2+q*tn+p])> 0.0000000001)
+                    cout << "AntiSymm2?" << p << q << r2[p*tn3+q*tn2+p*tn+q] << r2[p*tn3+q*tn2+q*tn+p] << endl;
+                twotrace1 += r2[p*tn3+q*tn2+p*tn+q];
+                twotrace2 += r2[p*tn3+q*tn2+q*tn+p];
+            }
+        }
+        cout << "2-traces2:" << twotrace1 << twotrace2 << endl;
+
+    }
+
+    // Rho is singlet spin-adapted.
+    // Everything but the spin-orbital cumulant of R2 is replaced with grassman Rho.
+    void TracedownConsistency(const cx_mat Rho,cx_mat& R2)
+    {
+        cx_mat rso(tn,tn); rso.zeros();
+        rso.submat(0,0,n-1,n-1) = Rho;
+        rso.submat(n,n,tn-1,tn-1) = Rho;
+        cx_mat hso(tn,tn); hso.zeros();
+        hso.submat(0,0,n-1,n-1).eye();
+        hso.submat(n,n,tn-1,tn-1).eye();
+        hso -= rso; // Hole density matrix.
+        cx tt(0.0,0.0);
+// Force antisymmetry and hermiticity of the TBDM.
+        R2 = 0.5*(R2+R2.t());
+        for (int p=0;p<tn;++p)
+        {
+            for (int q=0;q<tn;++q)
+            {
+                tt += R2[p*tn3+q*tn2+p*tn+q];
+                for (int r=0;r<tn;++r)
+                {
+                    for (int s=0;s<tn;++s)
+                    {
+                        cx tmp = 0.5*(R2[p*tn3+q*tn2+r*tn+s] - R2[p*tn3+q*tn2+s*tn+r]);
+                        R2[p*tn3+q*tn2+r*tn+s] = tmp;
+                        R2[p*tn3+q*tn2+s*tn+r] = -tmp;
+                    }
+                }
+            }
+        }
+// Correct R2.
+        cx trrho = trace(rso);
+        R2 *= (trrho-1)*(trrho)/(tt);
+// Force the correct trace.
+        cout << "Tracedown" << trrho << tt << endl;
+        cx_mat SP(rso); SP.zeros();
+// Tracedown R2.
+        for (int p=0;p<tn;++p)
+        {
+            for (int q=0;q<tn;++q)
+            {
+                for (int r=0;r<tn;++r)
+                {
+                    SP[p*tn+q] += R2[p*tn3+r*tn2+q*tn+r];
+                }
+            }
+        }
+        // get effective n from SP.
+        cx neff = 0.5*(1.0+sqrt(1.0+4.0*trace(SP)));
+        cout << "nEff" << neff << endl;
+        SP /= (neff-1.0);
+        cout << "Tracedown2" << trace(SP) << endl;
+        cx cumtrace(0.0,0.0); // Cumulant should trace to gamma*hole
+// Finally replace the separable part with grass.
+        for (int p=0;p<tn;++p)
+        {
+            for (int q=0;q<tn;++q)
+            {
+                cumtrace += R2[p*tn3+q*tn2+p*tn+q] - (SP(p,p)*SP(q,q)-SP(q,p)*SP(p,q));
+                /*
+                for (int r=0;r<tn;++r)
+                {
+                    for (int s=0;s<tn;++s)
+                    {
+                        R2[p*tn3+q*tn2+r*tn+s] += rso(p,r)*rso(q,s)-rso(q,r)*rso(p,s) - (SP(p,r)*SP(q,s)-SP(q,r)*SP(p,s));
+                    }
+                }
+                 */
+            }
+        }
+        cout << "Cumulant Trace? " << cumtrace << ":" << trace(-1.0*rso*hso) << endl;
+        /*
+        // Force antisymmetry, hermiticity of  TBDM.
+        R2 = 0.5*(R2+R2.t());
+        for (int p=0;p<tn;++p)
+        {
+            for (int q=0;q<tn;++q)
+            {
+                for (int r=0;r<tn;++r)
+                {
+                    for (int s=0;s<tn;++s)
+                    {
+                        cx tmp = 0.5*(R2[p*tn3+q*tn2+r*tn+s] - R2[p*tn3+q*tn2+s*tn+r]);
+                        R2[p*tn3+q*tn2+r*tn+s] = tmp;
+                        R2[p*tn3+q*tn2+s*tn+r] = -tmp;
+                    }
+                }
+            }
+        }*/
+        
+    }
+    
+//    performs U.R2.Ut
+    void Transform2(cx_mat& R2, const cx_mat& U)
+    {
+        cx_mat tmp(R2); tmp.zeros();
+        cx_mat tmp2(R2); tmp2.zeros();
+        // Contract over each dimension sequentially to get N(5)
+#pragma omp parallel for
+        for (int p=0;p<tn;++p)
+        {
+            for (int q=0;q<tn;++q)
+            {
+                for (int r=0;r<tn;++r)
+                {
+                    for (int s=0;s<tn;++s)
+                    {
+                        for (int t=0;t<tn;++t)
+                        {
+                            if (((p>=n) && (t<n)) || ((p<n) && (t>=n)))
+                                continue;
+                            tmp[p*tn3+q*tn2+r*tn+s] += U(p%n,t%n)*R2[t*tn3+q*tn2+r*tn+s];
+                        }
+                    }
+                }
+            }
+        }
+#pragma omp parallel for
+        for (int p=0;p<tn;++p)
+        {
+            for (int q=0;q<tn;++q)
+            {
+                for (int r=0;r<tn;++r)
+                {
+                    for (int s=0;s<tn;++s)
+                    {
+                        for (int t=0;t<tn;++t)
+                        {
+                            if (((q>=n) && (t<n)) || ((q<n) && (t>=n)))
+                                continue;
+                            tmp2[p*tn3+q*tn2+r*tn+s] += U(q%n,t%n)*tmp[p*tn3+t*tn2+r*tn+s];
+                        }
+                    }
+                }
+            }
+        }
+        tmp.zeros();
+#pragma omp parallel for
+        for (int p=0;p<tn;++p)
+        {
+            for (int q=0;q<tn;++q)
+            {
+                for (int r=0;r<tn;++r)
+                {
+                    for (int s=0;s<tn;++s)
+                    {
+                        for (int t=0;t<tn;++t)
+                        {
+                            if (((r>=n) && (t<n)) || ((r<n) && (t>=n)))
+                                continue;
+                            tmp[p*tn3+q*tn2+r*tn+s] += tmp2[p*tn3+q*tn2+t*tn+s]*conj(U(r%n,t%n));
+                        }
+                    }
+                }
+            }
+        }
+        tmp2.zeros();
+#pragma omp parallel for
+        for (int p=0;p<tn;++p)
+        {
+            for (int q=0;q<tn;++q)
+            {
+                for (int r=0;r<tn;++r)
+                {
+                    for (int s=0;s<tn;++s)
+                    {
+                        for (int t=0;t<tn;++t)
+                        {
+                            if (((s>=n) && (t<n)) || ((s<n) && (t>=n)))
+                                continue;
+                            tmp2[p*tn3+q*tn2+r*tn+s] += tmp[p*tn3+q*tn2+r*tn+t]*conj(U(s%n,t%n));
+                        }
+                    }
+                }
+            }
+        }
+        R2 = tmp2;
+        // Check some traces.
+/*        cx twotrace1(0.0,0.0),twotrace2(0.0,0.0);
+        for (int p=0;p<tn;++p)
+        {
+            for (int q=0;q<tn;++q)
+            {
+                if(abs( R2[p*tn3+q*tn2+p*tn+q]+R2[p*tn3+q*tn2+q*tn+p])> 0.0000000001)
+                    cout << "AntiSymm?" << p << q << R2[p*tn3+q*tn2+p*tn+q] << R2[p*tn3+q*tn2+q*tn+p] << endl;
+                twotrace1 += R2[p*tn3+q*tn2+p*tn+q];
+                twotrace2 += R2[p*tn3+q*tn2+q*tn+p];
+            }
+        }
+        cout << "2-Hrms:" << R2[1*tn3+2*tn2+3*tn+4] << R2[3*tn3+4*tn2+1*tn+2] << R2[3*tn3+4*tn2+2*tn+1] << R2[4*tn3+3*tn2+1*tn+2] << endl;
+        cout << "2-traces:" << twotrace1 << twotrace2 << endl;
+ */
+    }
+    
+    // Depends on current r2.
+    // Argument is singlet spin-adapted.
+    // It is converted to spin-orbital here, and then finally shifted back.
+    void bbgky1(cx_mat& Rho, cx_mat& RhoDot, const double time)
+    {
+        if (params["BBGKY1"])
+            Separabler2(Rho);
+        
+        RhoDot.zeros();
+        cx_mat rso(tn,tn); rso.zeros();
+        cx* vso = Vso.memptr();
+        
+        rso.zeros();
+#pragma omp parallel for
+        for (int p=0;p<tn;++p)
+        {
+            for (int r=0;r<tn;++r)
+                for (int s=0;s<tn;++s)
+                    for (int t=0;t<tn;++t)
+                    {
+                        for (int q=0;q<tn;++q)
+                        {
+                            rso(p,q) += 0.5*(vso[tn3*p+tn2*r+tn*s+t]*r2[tn3*s+tn2*t+tn*q+r]);
+                            rso(p,q) -= 0.5*(r2[tn3*p+tn2*r+tn*s+t]*vso[tn3*s+tn2*t+tn*q+r]);
+                        }
+                    }
+        }
+        
+        RhoDot = -j*(rso.submat(0,0,n-1,n-1)+rso.submat(n,n,2*n-1,2*n-1));
+    }
+    
+    // Depends on current r2 and vso (spin-orbital V -- unsymmetrized)
+    // r2 also has to be transformed at each step.
+    // These matrices are held in the spin-orbital basis
+    // r2 should be transformed ahead of this routine.
+    void bbgky2(cx_mat& R2, cx_mat& r2d, const double t)
+    {
+        r2d.zeros();
+        cx* vso = Vso.memptr();
+        /*
+        // Done exponentially.
+        for (int p=0;p<tn;++p)
+            for (int q=0;q<tn;++q)
+                for (int r=0;r<tn;++r)
+                    for (int s=0;s<tn;++s)
+                    {
+                        r2d[tn3*p+tn2*q+tn*r+s] = -j*(R2[tn3*p+tn2*q+tn*r+s]*(eigs(p%n)+eigs(q%n)-eigs(s%n)-eigs(r%n)));
+                    }
+        */
+        // two body terms.
+#pragma omp parallel for
+        for (int t=0;t<tn;++t)
+        {
+            for (int p=0;p<tn;++p)
+            {
+                for (int q=0;q<tn;++q)
+                    for (int r=0;r<tn;++r)
+                        for (int s=0;s<tn;++s)
+                        {
+                            if (R2[tn3*p+tn2*q+tn*r+s]==0.0)
+                                continue;
+                            for (int u=0;u<tn;++u)
+                            {
+                                r2d[tn3*t+tn2*u+tn*r+s] += -j*(vso[tn3*t+tn2*u+tn*p+q]*R2[tn3*p+tn2*q+tn*r+s]);
+                                r2d[tn3*p+tn2*q+tn*t+u] -= -j*(R2[tn3*p+tn2*q+tn*r+s]*vso[tn3*r+tn2*s+tn*t+u]);
+                            }
+                        }
+            }
+        }
+        r2d = 0.5*(r2d+r2d.t());
+    }
+    
+    inline cx g0(const cx_mat& d2,const cx_mat& ed2, const int& p, const int& q, const int& r, const int& s, int type=0)
+    {
+        cx d = (d2(p,r)+d2(q,s));
+        if (abs(d)<0.000000001 or type==-1)
+            return cx(0.0,0.0);
+        else if (type==1)
+            (j/(j*0.00000001+d));
+        else if (type==2) // Full term.
+            return j*((ed2(p,r)*ed2(q,s))-1.0)/d;
+        else if (type==3) // The inhomogeniety
+            return -j*((ed2(p,r)*ed2(q,s)))/d;
+        else if (type==0)
+            return -j/d;
+    }
+    
+    cx_mat FockBuildNoRotation(const cx_mat& Rho_, cx_mat& hmu, const double& time, double epsilon=0.000000001)
+    {
+        cx_mat Rho(Rho_);
+        cx_mat Vfock(n,n); Vfock.zeros();
+        cx* Vi = IntCur.memptr();
+        for (int p=0;p<n;++p)
+        {
+            for (int q=0;q<n;++q)
+            {
+                for(int r=0; r<n; ++r)
+                {
+                    for(int s=0; s<n; ++s)
+                    {
+                        Vfock(p,q) += 2.0*Vi[r*n3+p*n2+s*n+q]*Rho(s,r);
+                        Vfock(p,q) -= Vi[p*n3+r*n2+s*n+q]*Rho(s,r);
+                    }
+                }
+            }
+        }
+        //RhoDot_ -= -j*(Vfock*Rho_-Rho_*Vfock);
+        hmu += Vfock;
+        threading_policy::pop();
+        return hmu;
+    }
+
+    cx RhoDot(const cx_mat& Rho_, cx_mat& RhoDot_, const double& time, double epsilon=0.000000001, int g0flag=2)
+    {
+        cx_mat Rho(Rho_);
+        if (g0flag!=3 && !params["NoInhom"]) // Call the inhomogeneity.
+        {
+            RhoDot_.zeros();
+            RhoDot(Rho_, RhoDot_, time, epsilon, 3);
+     
+            // Include MP2 if neccesary.
+            if (params["IncMP2"])
+            {
+                cx_mat mp2(Rho.n_rows,Rho.n_cols); mp2.zeros();
+                mp2 += j*Emp2;
+                cx_mat Mp2 = symmatu(mp2,true);
+                Mp2.diag().zeros();
+//                Mp2.print("mp2");
+                RhoDot_ += Mp2%Rho;
+            }
+     
+        }
+        else if (g0flag==3)// This is the inhomogeneity.
+        {
+            // Only the initial density is fed to the inhomogeneity.
+            Rho = (V.t())*rho0*V;
+//            Rho.print("Inhom Rho:");
+        }
+     
+        for (int i=0; i<n; ++i)
+        {
+            if (real(Rho(i,i))<0)
+                Rho(i,i)=0.0;
+            if( abs(Rho(i,i))>1.0)
+                Rho(i,i)=1.0;
+        }
+
+#if HASUDR
+#pragma omp declare reduction( + : cx_mat : \
+std::transform(omp_in.begin( ),  omp_in.end( ),  omp_out.begin( ), omp_out.begin( ),  std::plus< std::complex<double> >( )) ) initializer (omp_priv(omp_orig))
+     
+#pragma omp declare reduction( + : cx_vec : \
+std::transform(omp_in.begin( ),  omp_in.end( ),  omp_out.begin( ), omp_out.begin( ),  std::plus< std::complex<double> >( )) ) initializer (omp_priv(omp_orig))
+#endif
+        
+        if (params["RIFock"]!=0.0)
+            return 0.0;
+        
+        threading_policy::enable_omp_only();
+        
+        cx_mat Eta(Rho); Eta.eye();
+        Eta -= Rho;
+        
+        cx_vec rho(Rho.diag());
+        cx_vec eta(Eta.diag());
+        
+        cx_mat d2 = Delta2();
+        cx_mat ed2 = exp(-j*d2*time);
+        cx* Vi = IntCur.memptr();
+        
+        cx_mat Out(RhoDot_); Out.zeros();
+        cx_mat tmp(n,n2); tmp.zeros();
+        cx_mat tmp2(n,n2); tmp2.zeros();
+        cx_mat tmp3(n2,n2); tmp3.zeros();
+
+        cx_mat Tmp(n,n2); Tmp.zeros();
+        cx_mat Tmp2(n,n2); Tmp2.zeros();
+        cx_mat Tmp3(n2,n2); Tmp3.zeros();
+        
+        {
+#pragma omp parallel for
+            for(int p=0; p<n; ++p)
+            {
+                for(int r=0; r<n; ++r)
+                {
+                    for(int s=0; s<n; ++s)
+                    {
+                        for(int t=0; t<n; ++t)
+                        {
+                            for(int q=0; q<n; ++q)
+                            {
+                                tmp3[p*n3+r*n2+q*n+s] += (2*Vi[p*n3+r*n2+t*n+s]-Vi[p*n3+r*n2+s*n+t])*Eta(t,q);
+                                Tmp3[p*n3+r*n2+q*n+s] += (2*Vi[p*n3+r*n2+t*n+s]-Vi[p*n3+r*n2+s*n+t])*Rho(t,q);
+                            }
+                        }
+                    }
+                }
+            }
+            
+#pragma omp parallel for
+            for(int p=0; p<n; ++p)
+            {
+                tmp.zeros(); Tmp.zeros();
+                tmp2.zeros(); Tmp2.zeros();
+                
+                for(int r=0; r<n; ++r)
+                {
+                    for(int s=0; s<n; ++s)
+                    {
+                        for(int t=0; t<n; ++t)
+                        {
+                            for(int q=0; q<n; ++q)
+                            {
+                                tmp[r*n2+s*n+q] += Vi[p*n3+r*n2+s*n+t]*g0(d2,ed2,p,r,s,t,g0flag)*Rho(t,q);
+                                Tmp[r*n2+s*n+q] += Vi[p*n3+r*n2+s*n+t]*g0(d2,ed2,p,r,s,t,g0flag)*Eta(t,q);
+                            }
+                        }
+                        
+                        for(int t=0; t<n; ++t)
+                        {
+                            for(int q=0; q<n; ++q)
+                            {
+                                tmp2[r*n2+q*n+s] += tmp[r*n2+t*n+s]*Rho(t,q);
+                                Tmp2[r*n2+q*n+s] += Tmp[r*n2+t*n+s]*Eta(t,q);
+                            }
+                        }
+                        
+                    }
+                }
+                tmp.zeros();
+                Tmp.zeros();
+                for(int r=0; r<n; ++r)
+                {
+                    for(int s=0; s<n; ++s)
+                    {
+                        for(int t=0; t<n; ++t)
+                        {
+                            for(int q=0; q<n; ++q)
+                            {
+                                tmp[q*n2+r*n+s] += tmp2[t*n2+r*n+s]*Eta(q,t);
+                                Tmp[q*n2+r*n+s] += Tmp2[t*n2+r*n+s]*Rho(q,t);
+                            }
+                        }
+                    }
+                }
+                for(int r=0; r<n; ++r)
+                {
+                    for(int s=0; s<n; ++s)
+                    {
+                        for(int t=0; t<n; ++t)
+                        {
+                            for(int q=0; q<n; ++q)
+                            {
+                                Out[p*n+q] -= tmp[r*n2+t*n+s]*tmp3[t*n3+s*n2+q*n+r];
+                                Out[p*n+q] += Tmp[r*n2+t*n+s]*Tmp3[t*n3+s*n2+q*n+r];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        RhoDot_ = (Out+Out.t());
+        
+        threading_policy::pop();
+        return (trace(RhoDot_%Rho));
+    }
+    
+};
+
+#endif
