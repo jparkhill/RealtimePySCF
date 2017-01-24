@@ -127,7 +127,7 @@ class tdscf:
         return P
 
     def TDDDFTstep(self):
-        if (self.params["Method"] == "RK4"):
+        if (self.params["Method"] == "MMUT"):
             print "Finish step."
         elif (self.params["Method"] == "RK4"):
             print "Finish step."
