@@ -1,8 +1,9 @@
 # tdscf_pyscf
-a TDSCF extension of PYSCF and our TCL code etc.... 
+a TDSCF extension of PYSCF incorporating TCL code etc.... 
 
 Goals: 
-Pure Python TDSCF working. 
-BO TDSCF (jkoh). 
-Propagations which call a C/C++ step routine provided by /lib
+- Pure Python TDSCF working. 
+- BO TDSCF (jkoh). 
+- Propagations which call a C/C++ step routine provided by /lib (tnguye23)
+- Periodic? 
 
