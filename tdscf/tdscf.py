@@ -81,6 +81,7 @@ class tdscf:
         '''
         self.S = self.the_scf.get_ovlp()
         self.X = MatrixPower(S,-1./2.)
+        self.C = self.X # Initial set of orthogonal coordinates.
         rhoAO = self.InitFockBuild()
         return
 
@@ -124,7 +125,17 @@ class tdscf:
 
     def TDDDFTstep(self):
         if (self.params["Method"] == "MMUT"):
-            # First perform a fock build, and rotate the MO densities into the current basis.
+            # First perform a fock build
+            self.FockBuild()
+            Fmo = TransMat(self.F,self.C)
+            self.eigs, rot = np.linalg.eig(Fmo)
+            # rotate the densitites and C into this basis.
+            self.rho = TransMat(self.rho, rot)
+            self.rhoM12 = TransMat(self.rhoM12, rot)
+            self.C = self.C * rot
+            # Make the exponential propagator for the dipole.
+            # do the actual propagation in the MO basis.
+            heff =
 
         elif (self.params["Method"] == "RK4"):
             print "Finish step."
