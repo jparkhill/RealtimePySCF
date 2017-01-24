@@ -29,6 +29,7 @@ class tdscf:
         self.rho = None # Current MO basis density matrix.
         self.rhoM12 = None # For MMUT step
         self.F = None # (?x?)
+        self.eigs = None # current fock eigenvalues.
         self.S = None # (ao X ao)
         self.C = None # (ao X mo)
         self.X = None # AO => LAO
@@ -74,9 +75,11 @@ class tdscf:
 
     def InitializeLiouvillian(self):
         '''
-        Building a Fock Matrix and calculating dipole moment
+        Get an initial Fock matrix.
         '''
-        rho = self.InitFockBuild()
+        self.S = self.the_scf.get_ovlp()
+        self.X = MatrixPower(S,-1./2.)
+        self.rho = self.InitFockBuild()
         return
 
     def InitFockBuild(self):
@@ -113,11 +116,14 @@ class tdscf:
         return P
 
     def FockBuild(self):
+        """
+        Updates self.F given current self.rho (both complex.)
+        """
         return
 
     def TDDDFTstep(self):
         if (self.params["Method"] == "MMUT"):
-            print "Finish step."
+
         elif (self.params["Method"] == "RK4"):
             print "Finish step."
         else:
