@@ -3,7 +3,8 @@ import scipy
 import scipy.linalg
 from func import *
 from pyscf import gto, dft, scf, ao2mo
-from tdfields import *
+#from tdfields import *
+from cmath import *
 
 class tdscf:
     """
@@ -12,13 +13,15 @@ class tdscf:
 
     By default it does
     """
-    def __init__(self,the_scf_):
+    def __init__(self,the_scf_,mol):
         """
         Args:
             the_scf an SCF object from pyscf (should probably take advantage of complex RKS already in PYSCF)
         Returns:
             Nothing.
         """
+        #To be Sorted later
+        self.Enuc = the_scf_.e_tot - dft.rks.energy_elec(the_scf_,the_scf_.make_rdm1())[0]
         #Global numbers
         self.t = 0.0
         self.n_ao = None
@@ -39,9 +42,10 @@ class tdscf:
 
         # Objects
         self.the_scf  = the_scf_
+        self.mol = mol
         self.params = dict()
         self.initialcondition()
-        self.field = fields(the_scf_, self.params)
+        #self.field = fields(the_scf_, self.params)
         self.prop()
         return
 
@@ -93,13 +97,14 @@ class tdscf:
         n_occ = self.n_occ
         Ne = 2 * n_occ
         err = 100
+        it = 0
         # Making rotation matrix X(|AO><MO|)
         self.H = self.the_scf.get_hcore()
         S = self.the_scf.get_ovlp()
-        #self.eigs, self.C = scf.hf.eig(H,S); Not needed.
         P = self.the_scf.make_rdm1()
         Veff = dft.rks.get_veff(self.the_scf, None, P)
         self.F = self.H + Veff
+        E = self.energy(P)+ self.Enuc
         # Roothan's Equation
         # Question: Does Fock matrix needs to be solved in MO basis?
         # for the time being anything goes...
@@ -107,14 +112,24 @@ class tdscf:
         while (err > 10**-10):
             Fold = self.F
             self.eigs, self.C = scipy.linalg.eigh(self.F, S)
-            # C: |BO><MO|
+            #self.C = self.C.astype(np.complex)
+            #for i in range(self.n_mo):
+            #    self.C[:,i] *= np.exp(1.j*np.random.random())
+        #    C = self.C * e**(1j * 0.1)
             # P/2 = C*C.t() for Occ orbitals
             Pold = P
-            P = 2 * np.dot(self.C[:,:n_occ],np.transpose(self.C[:,:n_occ]))
+            #P = 2 * np.dot(self.C[:,:n_occ],np.transpose(self.C[:,:n_occ]))
+            P = 2 * np.dot(self.C[:,:n_occ],(self.C[:,:n_occ].T))
             P = 0.6*Pold + 0.4*P
             P = Ne * P / (TrDot(P, S))
             self.F = self.H + dft.rks.get_veff(self.the_scf, None, P)
-            err = abs(sum(sum(self.F-Fold)))
+            Eold = E
+            E = self.energy(P) + self.Enuc
+            err = abs(E-Eold)#abs(sum(sum(self.F-Fold)))
+            if (it%10 ==0):
+                print "Iteration:", it,"; Energy:",E,"; Error =",err
+            it += 1
+        print "Energy:",E
         print "Ne:", TrDot(P, S)
         return P
 
@@ -146,8 +161,20 @@ class tdscf:
     def dipole(self):
         return self.fields.Expectation(self.rho)
 
-    def energy(self):
-        return 0.0
+    def energy(self,P):
+
+        Ecore = TrDot(P, self.H)
+
+        J,K = scf.hf.get_jk(self.mol,P)
+        Ecoul = 0.5*TrDot(P,J)
+
+        nn, Exc, Vx = self.the_scf._numint.nr_rks(self.mol, self.the_scf.grids, self.the_scf.xc, P, 0)
+        hyb = self.the_scf._numint.hybrid_coeff(self.the_scf.xc, spin=(self.mol.spin>0)+1)
+        Exc -= 0.5 * 0.5 * hyb * TrDot(P,K)
+
+        E = Ecore + Ecoul + Exc
+        return E
+
 
     def loginstant(self):
         tore = [self.t]+self.dipole()+[self.energy()]
