@@ -1,6 +1,7 @@
 import numpy as np
 import scipy
 import scipy.linalg
+from func import *
 from pyscf import gto, dft, scf, ao2mo
 
 class BORHF():
@@ -592,19 +593,6 @@ def BOprojector(mol1,mol2):
     PAB = np.dot(np.linalg.inv(SAA), SAB)
     U[0:nA,nA:nAB] = -PAB
     return U
-
-def TransMat(M,U,inv = 1):
-    if inv == 1:
-        # U.t() * M * U
-        Mtilde = np.dot(np.dot(np.transpose(U),M),U)
-    elif inv == -1:
-        # U * M * U.t()
-        Mtilde = np.dot(np.dot(U,M),np.transpose(U))
-    return Mtilde
-
-def TrDot(A,B):
-    C = np.trace(np.dot(A,B))
-    return C
 
 
 def dmguess1 (mol,U):

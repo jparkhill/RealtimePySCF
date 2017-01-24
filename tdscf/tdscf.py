@@ -1,6 +1,7 @@
 import numpy as np
 import scipy
 import scipy.linalg
+from func import *
 from pyscf import gto, dft, scf, ao2mo
 from tdfields import *
 
@@ -29,15 +30,104 @@ class tdscf:
         self.rho = None # Current MO basis density matrix.
         self.rhoM12 = None # For MMUT step
 
+        #Global variables
+        self.n_ao = None
+        self.n_mo = None
+        self.n_occ = None
+        #Global Matrix
+        self.F = None
+        self.X = None
+
+
         self.log = []
         self.field = fields(the_scf_, self.params)
 
         self.initialcondition()
-        self.prop()
+        #self.prop()
         return
 
+    def initialcondition(self):
+        print '''
+        ===================================
+        |  Realtime TDSCF module          |
+        ===================================
+        | J. Parkhill, T. Nguyen          |
+        | J. Koh, J. Herr,  K. Yao        |
+        ===================================
+        | Refs: 10.1021/acs.jctc.5b00262  |
+        |       10.1063/1.4916822         |
+        ===================================
+        '''
+        n_ao = self.n_ao = self.the_scf.make_rdm1().shape[0]
+        n_mo = self.n_mo = n_ao
+        n_occ = self.n_occ = int(sum(self.the_scf.mo_occ)/2)
+
+        print "n_ao:", n_ao, "n_mo:", n_mo, "n_occ:", n_occ
+
+
+
+
+
+
+        self.ReadParameter()
+        self.InitializeLiouvillian()
+
+
+        return
+
+    def ReadParameter(self):
+        '''
+        read the file and fill the params dictionary
+        '''
+        return
+    def InitializeLiouvillian(self):
+        '''
+        Building a Fock Matrix and calculating dipole moment
+        '''
+        rho = self.InitFockBuild()
+
+
+
+        return
+
+    def InitFockBuild(self):
+        '''
+        Using Roothan's equation to build a Fock matrix and initial density matrix
+        '''
+        n_occ = self.n_occ
+        Ne = 2 * n_occ
+        err = 100
+        # Making rotation matrix X(|AO><MO|)
+        H = self.the_scf.get_hcore()
+        S = self.the_scf.get_ovlp()
+        eigvalH, self.X = scf.hf.eig(H,S)
+
+        P = self.the_scf.make_rdm1()
+        Veff = dft.rks.get_veff(self.the_scf, None, P)
+
+        F = H + Veff
+
+        # Roothan's Equation
+        # Question: Does Fock matrix needs to be solved in MO basis?
+        while (err > 10**-10):
+            Fold = F
+            eigvalF, C = scipy.linalg.eigh(F, S)
+            # C: |BO><MO|
+            # P/2 = C*C.t() for Occ orbitals
+            Pold = P
+            P = 2 * np.dot(C[:,:n_occ],np.transpose(C[:,:n_occ]))
+            P = 0.6*Pold + 0.4*P
+            P = Ne * P / (TrDot(P, S))
+            F = H + dft.rks.get_veff(self.the_scf, None, P)
+            err = abs(sum(sum(F-Fold)))
+        print "Ne:", TrDot(P, S)
+
+        self.F = F
+
+        return P
+
     def TDDDFTstep(self):
-        if (self.params["Method"] == "RK4"):
+        if (self.params["Method"] == "MMUT"):
             print "Finish step."
         elif (self.params["Method"] == "RK4"):
             print "Finish step."
@@ -74,3 +164,5 @@ class tdscf:
             self.log.append(self.loginstant())
             # Do logging.
             iter = iter + 1
+
+# need to put this in separate Files
