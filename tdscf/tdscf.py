@@ -34,6 +34,8 @@ class tdscf:
         self.n_ao = None
         self.n_mo = None
         self.n_occ = None
+        #Global Matrix
+        self.F = None
         self.X = None
 
 
@@ -82,13 +84,13 @@ class tdscf:
         '''
         Building a Fock Matrix and calculating dipole moment
         '''
-        self.FockBuild()
+        rho = self.InitFockBuild()
 
 
 
         return
 
-    def FockBuild(self):
+    def InitFockBuild(self):
         '''
         Using Roothan's equation to build a Fock matrix and initial density matrix
         '''
@@ -120,8 +122,9 @@ class tdscf:
             err = abs(sum(sum(F-Fold)))
         print "Ne:", TrDot(P, S)
 
+        self.F = F
 
-        return
+        return P
 
     def TDDDFTstep(self):
         if (self.params["Method"] == "RK4"):
