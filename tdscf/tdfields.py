@@ -26,7 +26,11 @@ class fields:
         return
 
     def ImpulseAmp(self,time):
-        return self.fieldAmplitude*np.sin(self.FieldFreq*time)*(1.0/sqrt(2.0*3.1415*self.Tau))*np.exp(-1.0*np.power(time-t0,2.0)/(2.0*self.Tau*self.Tau));
+        amp = self.fieldAmplitude*np.sin(self.FieldFreq*time)*(1.0/sqrt(2.0*3.1415*self.Tau))*np.exp(-1.0*np.power(time-t0,2.0)/(2.0*self.Tau*self.Tau));
+        IsOn = False
+        if (np.abs(amp)>pow(10.0.0,-9.0)):
+            IsOn = True
+        return amp,IsOn
 
     def InitializeExpectation(self,rho0_, C_):
         self.pol0 = self.Expectation(rho0_,C_)
@@ -38,9 +42,29 @@ class fields:
             time: current time.
         Returns:
             a_mat + dipole field at this time.
+            IsOn
         """
-        mpol = self.pol*self.ImpulseAmp(time)
-        return a_mat + np.einsum("ijk,k->ij",self.dip_ints,mpol)
+        mpol, IsOn = self.pol*self.ImpulseAmp(time)
+        if (IsOn):
+            return a_mat + np.einsum("ijk,k->ij",self.dip_ints,mpol), True
+        else:
+            return a_mat, False
+
+    def ApplyField(self, a_mat, c_mat, time):
+        """
+        Args:
+            a_mat: an AO matrix to which the field is added.
+            c_mat: a AO=>MO coefficient matrix.
+            time: current time.
+        Returns:
+            a_mat + dipole field at this time.
+            IsOn
+        """
+        mpol, IsOn = self.pol*self.ImpulseAmp(time)
+        if (IsOn):
+            return a_mat + np.einsum("ijk,k->ij",self.dip_ints,mpol), True
+        else :
+            return a_mat, False
 
     def Expectation(self, rho_, C_):
         """

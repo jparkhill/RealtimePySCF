@@ -13,7 +13,7 @@ class tdscf:
 
     By default it does
     """
-    def __init__(self,the_scf_,mol):
+    def __init__(self,the_scf_):
         """
         Args:
             the_scf an SCF object from pyscf (should probably take advantage of complex RKS already in PYSCF)
@@ -42,7 +42,7 @@ class tdscf:
 
         # Objects
         self.the_scf  = the_scf_
-        self.mol = mol
+        self.mol = the_scf_.mol
         self.params = dict()
         self.initialcondition()
         #self.field = fields(the_scf_, self.params)
@@ -67,8 +67,6 @@ class tdscf:
         print "n_ao:", n_ao, "n_mo:", n_mo, "n_occ:", n_occ
         self.ReadParams()
         self.InitializeLiouvillian()
-
-
         return
 
     def ReadParams(self):
@@ -79,6 +77,14 @@ class tdscf:
         self.params["MaxIter"] = 10000000
         self.params["Model"] = "TDDFT"
         self.params["Method"] = "MMUT"
+        self.params["ExDir"] = 1.0
+        self.params["ExDir"] = 1.0
+        self.params["EyDir"] = 1.0
+        self.params["FieldAmplitude"] = 0.001
+        self.params["FieldFreq"] = 1.1
+        self.params["Tau"] = 0.07
+        self.params["tOn"] = 7.0*self.params["Tau"]
+        # Here they should be read from disk.
         return
 
     def InitializeLiouvillian(self):
@@ -140,7 +146,33 @@ class tdscf:
         """
         return  self.H
 
-    def TDDDFTstep(self):
+    def Split_RK4_Step_MMUT(w, v , oldrho , time, dt ,IsOn):
+        Ud = np.exp(w*(-0.5j)*dt);
+        U = TransMat(np.diag(Ud),v,-1)
+        RhoHalfStepped = TransMat(oldrho,U,-1)
+        # If any TCL propagation occurs...
+        DontDo="""
+        SplitLiouvillian( RhoHalfStepped, k1,tnow,IsOn);
+        v2 = (dt/2.0) * k1;
+        v2 += RhoHalfStepped;
+        SplitLiouvillian(  v2, k2,tnow+(dt/2.0),IsOn);
+        v3 = (dt/2.0) * k2;
+        v3 += RhoHalfStepped;
+        SplitLiouvillian(  v3, k3,tnow+(dt/2.0),IsOn);
+        v4 = (dt) * k3;
+        v4 += RhoHalfStepped;
+        SplitLiouvillian(  v4, k4,tnow+dt,IsOn);
+        newrho = RhoHalfStepped;
+        newrho += dt*(1.0/6.0)*k1;
+        newrho += dt*(2.0/6.0)*k2;
+        newrho += dt*(2.0/6.0)*k3;
+        newrho += dt*(1.0/6.0)*k4;
+        newrho = U*newrho*U.t();
+        """
+        newrho = TransMat(RhoHalfStepped,U,-1)
+        return
+
+    def TDDFTstep(self,time):
         if (self.params["Method"] == "MMUT"):
             # First perform a fock build
             self.FockBuild()
@@ -151,54 +183,55 @@ class tdscf:
             self.rhoM12 = TransMat(self.rhoM12, rot)
             self.C = self.C * rot
             # Make the exponential propagator for the dipole.
-            # do the actual propagation in the MO basis.
-            # First perform a fock build, and rotate the MO densities into the current basis.
+            FmoPlusField, IsOn = self.field.ApplyField(Fmo,self.C,time)
+            # For exponential propagator:
+            w,v = np.linalg.eig(FmoPlusField)
+            NewRhoM12 = Split_RK4_Step_MMUT(w, v, self.rhoM12, time, self.params["dt"], IsOn);
+            NewRho = Split_RK4_Step_MMUT(w, v, NewRhoM12, time,self.params["dt"]/2.0, IsOn);
+            self.rho = 0.5*(NewRho+NewRho.T);
+            self.rhoM12 = 0.5*(NewRhoM12+NewRhoM12.T);
         elif (self.params["Method"] == "RK4"):
             print "Finish step."
         else:
             raise Exception("Unknown Method...")
         return
 
-    def step(self):
+    def step(self,time):
         """
         Performs a step
         Updates t, rho, and possibly other things.
         """
         if (self.params["Model"] == "TDDFT"):
-            return self.TDDFTstep()
+            return self.TDDFTstep(time)
         return
 
     def dipole(self):
-        return self.fields.Expectation(self.rho)
+        return self.fields.Expectation(self.rho, self.C)
 
     def energy(self,P):
-
         Ecore = TrDot(P, self.H)
-
         J,K = scf.hf.get_jk(self.mol,P)
         Ecoul = 0.5*TrDot(P,J)
-
         nn, Exc, Vx = self.the_scf._numint.nr_rks(self.mol, self.the_scf.grids, self.the_scf.xc, P, 0)
         hyb = self.the_scf._numint.hybrid_coeff(self.the_scf.xc, spin=(self.mol.spin>0)+1)
         Exc -= 0.5 * 0.5 * hyb * TrDot(P,K)
-
         E = Ecore + Ecoul + Exc
         return E
 
-
     def loginstant(self):
-        tore = [self.t]+self.dipole()+[self.energy()]
-        return
+        tore = [self.t]+self.dipole()+[self.energy(rho)]
+        print tore
+        return tore
 
     def prop(self):
         """
         The main tdscf propagation loop.
         """
         iter = 0
+        t = 0
         while (iter<self.params["MaxIter"]):
-            self.step()
+            self.step(t)
             self.log.append(self.loginstant())
             # Do logging.
             iter = iter + 1
-
-# need to put this in separate Files
+            t = t + dt
