@@ -28,11 +28,13 @@ class tdscf:
         #Global Matrices
         self.rho = None # Current MO basis density matrix.
         self.rhoM12 = None # For MMUT step
-        self.F = None # (?x?)
+        self.F = None # (AO x AO)
         self.eigs = None # current fock eigenvalues.
         self.S = None # (ao X ao)
         self.C = None # (ao X mo)
         self.X = None # AO => LAO
+        self.V = None # LAO x current MO
+        self.H = None # (ao X ao)  core hamiltonian.
         self.log = []
 
         # Objects
@@ -79,7 +81,7 @@ class tdscf:
         '''
         self.S = self.the_scf.get_ovlp()
         self.X = MatrixPower(S,-1./2.)
-        self.rho = self.InitFockBuild()
+        rhoAO = self.InitFockBuild()
         return
 
     def InitFockBuild(self):
@@ -90,39 +92,39 @@ class tdscf:
         Ne = 2 * n_occ
         err = 100
         # Making rotation matrix X(|AO><MO|)
-        H = self.the_scf.get_hcore()
+        self.H = self.the_scf.get_hcore()
         S = self.the_scf.get_ovlp()
         eigvalH, self.X = scf.hf.eig(H,S)
         P = self.the_scf.make_rdm1()
         Veff = dft.rks.get_veff(self.the_scf, None, P)
-        F = H + Veff
+        self.F = self.H + Veff
         # Roothan's Equation
         # Question: Does Fock matrix needs to be solved in MO basis?
         # for the time being anything goes...
         # MO basis is easier to implement.
         while (err > 10**-10):
-            Fold = F
-            eigvalF, C = scipy.linalg.eigh(F, S)
+            Fold = self.F
+            self.eigs, self.C = scipy.linalg.eigh(self.F, S)
             # C: |BO><MO|
             # P/2 = C*C.t() for Occ orbitals
             Pold = P
-            P = 2 * np.dot(C[:,:n_occ],np.transpose(C[:,:n_occ]))
+            P = 2 * np.dot(self.C[:,:n_occ],np.transpose(self.C[:,:n_occ]))
             P = 0.6*Pold + 0.4*P
             P = Ne * P / (TrDot(P, S))
-            F = H + dft.rks.get_veff(self.the_scf, None, P)
-            err = abs(sum(sum(F-Fold)))
+            self.F = self.H + dft.rks.get_veff(self.the_scf, None, P)
+            err = abs(sum(sum(self.F-Fold)))
         print "Ne:", TrDot(P, S)
-        self.F = F
         return P
 
     def FockBuild(self):
         """
         Updates self.F given current self.rho (both complex.)
         """
-        return
+        return  self.H +
 
     def TDDDFTstep(self):
         if (self.params["Method"] == "MMUT"):
+            # First perform a fock build, and rotate the MO densities into the current basis.
 
         elif (self.params["Method"] == "RK4"):
             print "Finish step."
