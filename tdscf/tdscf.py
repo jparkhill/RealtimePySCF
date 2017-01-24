@@ -19,31 +19,27 @@ class tdscf:
         Returns:
             Nothing.
         """
-        self.the_scf  = the_scf_
-        self.params = dict()
-        self.params["dt"] = 0.02
-        self.params["MaxIter"] = 10000000
-        self.params["Model"] = "TDDFT"
-        self.params["Method"] = "MMUT"
-
+        #Global numbers
         self.t = 0.0
-        self.rho = None # Current MO basis density matrix.
-        self.rhoM12 = None # For MMUT step
-
-        #Global variables
         self.n_ao = None
         self.n_mo = None
         self.n_occ = None
-        #Global Matrix
-        self.F = None
-        self.X = None
 
-
+        #Global Matrices
+        self.rho = None # Current MO basis density matrix.
+        self.rhoM12 = None # For MMUT step
+        self.F = None # (?x?)
+        self.S = None # (ao X ao)
+        self.C = None # (ao X mo)
+        self.X = None # AO => LAO
         self.log = []
-        self.field = fields(the_scf_, self.params)
 
+        # Objects
+        self.the_scf  = the_scf_
+        self.params = dict()
         self.initialcondition()
-        #self.prop()
+        self.field = fields(the_scf_, self.params)
+        self.prop()
         return
 
     def initialcondition(self):
@@ -61,33 +57,26 @@ class tdscf:
         n_ao = self.n_ao = self.the_scf.make_rdm1().shape[0]
         n_mo = self.n_mo = n_ao
         n_occ = self.n_occ = int(sum(self.the_scf.mo_occ)/2)
-
         print "n_ao:", n_ao, "n_mo:", n_mo, "n_occ:", n_occ
-
-
-
-
-
-
-        self.ReadParameter()
+        self.ReadParams()
         self.InitializeLiouvillian()
-
-
         return
 
-    def ReadParameter(self):
+    def ReadParams(self):
         '''
-        read the file and fill the params dictionary
+        Read the file and fill the params dictionary
         '''
+        self.params["dt"] = 0.02
+        self.params["MaxIter"] = 10000000
+        self.params["Model"] = "TDDFT"
+        self.params["Method"] = "MMUT"
         return
+
     def InitializeLiouvillian(self):
         '''
         Building a Fock Matrix and calculating dipole moment
         '''
         rho = self.InitFockBuild()
-
-
-
         return
 
     def InitFockBuild(self):
@@ -101,14 +90,13 @@ class tdscf:
         H = self.the_scf.get_hcore()
         S = self.the_scf.get_ovlp()
         eigvalH, self.X = scf.hf.eig(H,S)
-
         P = self.the_scf.make_rdm1()
         Veff = dft.rks.get_veff(self.the_scf, None, P)
-
         F = H + Veff
-
         # Roothan's Equation
         # Question: Does Fock matrix needs to be solved in MO basis?
+        # for the time being anything goes...
+        # MO basis is easier to implement.
         while (err > 10**-10):
             Fold = F
             eigvalF, C = scipy.linalg.eigh(F, S)
@@ -121,10 +109,11 @@ class tdscf:
             F = H + dft.rks.get_veff(self.the_scf, None, P)
             err = abs(sum(sum(F-Fold)))
         print "Ne:", TrDot(P, S)
-
         self.F = F
-
         return P
+
+    def FockBuild(self):
+        return
 
     def TDDDFTstep(self):
         if (self.params["Method"] == "MMUT"):
@@ -151,7 +140,7 @@ class tdscf:
         return 0.0
 
     def loginstant(self):
-        tore = [self.t]+self.dipole()+self.energy()
+        tore = [self.t]+self.dipole()+[self.energy()]
         return
 
     def prop(self):

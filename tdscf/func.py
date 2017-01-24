@@ -1,3 +1,8 @@
+"""
+These routines should eventually be removed...
+But for the time being it's okay. 
+"""
+
 import numpy as np
 
 def TransMat(M,U,inv = 1):
