@@ -58,11 +58,13 @@ class tdscf:
         ===================================
         '''
         n_ao = self.n_ao = self.the_scf.make_rdm1().shape[0]
-        n_mo = self.n_mo = n_ao
+        n_mo = self.n_mo = n_ao # should be fixed.
         n_occ = self.n_occ = int(sum(self.the_scf.mo_occ)/2)
         print "n_ao:", n_ao, "n_mo:", n_mo, "n_occ:", n_occ
         self.ReadParams()
         self.InitializeLiouvillian()
+
+
         return
 
     def ReadParams(self):
@@ -79,7 +81,7 @@ class tdscf:
         '''
         Get an initial Fock matrix.
         '''
-        self.S = self.the_scf.get_ovlp()
+        S = self.S = self.the_scf.get_ovlp()
         self.X = MatrixPower(S,-1./2.)
         rhoAO = self.InitFockBuild()
         return
@@ -94,7 +96,7 @@ class tdscf:
         # Making rotation matrix X(|AO><MO|)
         self.H = self.the_scf.get_hcore()
         S = self.the_scf.get_ovlp()
-        eigvalH, self.X = scf.hf.eig(H,S)
+        #self.eigs, self.C = scf.hf.eig(H,S); Not needed.
         P = self.the_scf.make_rdm1()
         Veff = dft.rks.get_veff(self.the_scf, None, P)
         self.F = self.H + Veff
@@ -120,12 +122,12 @@ class tdscf:
         """
         Updates self.F given current self.rho (both complex.)
         """
-        return  self.H +
+        return  self.H
 
     def TDDDFTstep(self):
         if (self.params["Method"] == "MMUT"):
             # First perform a fock build, and rotate the MO densities into the current basis.
-
+            print ' '
         elif (self.params["Method"] == "RK4"):
             print "Finish step."
         else:
