@@ -1,4 +1,5 @@
 import numpy as np
+from cmath import *
 import scipy
 import scipy.linalg
 from pyscf import gto, dft, scf, ao2mo
@@ -14,7 +15,7 @@ class fields:
         self.tOn = params_["tOn"]
         self.Tau = params_["Tau"]
         self.FieldFreq = params_["FieldFreq"]
-        self.pol = np.array([params_["ExDir"],params_["EyDir"]]),params_["EzDir"]])])
+        self.pol = np.array([params_["ExDir"],params_["EyDir"],params_["EzDir"]])
         self.pol0 = None
         return
 
@@ -26,9 +27,9 @@ class fields:
         return
 
     def ImpulseAmp(self,time):
-        amp = self.fieldAmplitude*np.sin(self.FieldFreq*time)*(1.0/sqrt(2.0*3.1415*self.Tau))*np.exp(-1.0*np.power(time-t0,2.0)/(2.0*self.Tau*self.Tau));
+        amp = self.fieldAmplitude*np.sin(self.FieldFreq*time)*(1.0/sqrt(2.0*3.1415*self.Tau))*np.exp(-1.0*np.power(time-self.tOn,2.0)/(2.0*self.Tau*self.Tau));
         IsOn = False
-        if (np.abs(amp)>pow(10.0.0,-9.0)):
+        if (np.abs(amp)>pow(10.0,-9.0)):
             IsOn = True
         return amp,IsOn
 
@@ -44,7 +45,8 @@ class fields:
             a_mat + dipole field at this time.
             IsOn
         """
-        mpol, IsOn = self.pol*self.ImpulseAmp(time)
+        amp, IsOn = self.ImpulseAmp(time)
+        mpol = self.pol * amp
         if (IsOn):
             return a_mat + np.einsum("ijk,k->ij",self.dip_ints,mpol), True
         else:
@@ -60,7 +62,8 @@ class fields:
             a_mat + dipole field at this time.
             IsOn
         """
-        mpol, IsOn = self.pol*self.ImpulseAmp(time)
+        amp, IsOn = self.ImpulseAmp(time)
+        mpol = self.pol * amp
         if (IsOn):
             return a_mat + np.einsum("ijk,k->ij",self.dip_ints,mpol), True
         else :
