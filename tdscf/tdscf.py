@@ -239,7 +239,7 @@ class tdscf:
         return E
 
     def loginstant(self):
-        tore = [self.t]+self.dipole()+[self.energy(rho)]
+        tore = [self.t]+self.dipole()+[self.energy(self.rho)]
         print tore
         return tore
 
@@ -254,4 +254,4 @@ class tdscf:
             self.log.append(self.loginstant())
             # Do logging.
             iter = iter + 1
-            t = t + dt
+            t = t + self.params["dt"]

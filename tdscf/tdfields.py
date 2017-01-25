@@ -23,7 +23,7 @@ class fields:
         """
         Performs the required PYSCF calls to generate the AO basis dipole matrices.
         """
-        self.dip_ints = the_scf.mol.intor('cint1e_r_sph', comp=3) # ao,ao,component.
+        self.dip_ints = the_scf.mol.intor('cint1e_r_sph', comp=3) # component,ao,ao.
         return
 
     def ImpulseAmp(self,time):
@@ -79,9 +79,9 @@ class fields:
         """
         # At this point convert both into MO and then calculate the dipole...
         rhoMO = np.dot(np.dot(C_.T,rho_),C_)
-        muMO1 = np.einsum("mnk,mi->ink",self.dip_ints,C_)
+        muMO1 = np.einsum("knm,mi->ink",self.dip_ints,C_)
         muMO = np.einsum("ink,nj->ijk",muMO1,C_)
         if (self.pol0 != None):
-            return np.einsum("ij,ji",rhoMO,muMO) - self.pol0
+            return np.einsum("ij,jik->k",rhoMO,muMO) - self.pol0
         else:
-            return np.einsum("ij,ji",rhoMO,muMO)
+            return np.einsum("ij,jik->k",rhoMO,muMO)
