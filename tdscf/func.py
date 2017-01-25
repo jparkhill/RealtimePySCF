@@ -8,10 +8,10 @@ import numpy as np
 def TransMat(M,U,inv = 1):
     if inv == 1:
         # U.t() * M * U
-        Mtilde = np.dot(np.dot(U.T,M),U)
+        Mtilde = np.dot(np.dot(U.T.conj(),M),U)
     elif inv == -1:
         # U * M * U.t()
-        Mtilde = np.dot(np.dot(U,M),U.T)
+        Mtilde = np.dot(np.dot(U,M),U.T.conj())
     return Mtilde
 
 def TrDot(A,B):

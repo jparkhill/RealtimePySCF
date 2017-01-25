@@ -48,7 +48,8 @@ class fields:
         amp, IsOn = self.ImpulseAmp(time)
         mpol = self.pol * amp
         if (IsOn):
-            return a_mat + np.einsum("ijk,k->ij",self.dip_ints,mpol), True
+            print "Field on"
+            return a_mat + 2.0*np.einsum("kij,k->ij",self.dip_ints,mpol), True
         else:
             return a_mat, False
 
@@ -65,7 +66,8 @@ class fields:
         amp, IsOn = self.ImpulseAmp(time)
         mpol = self.pol * amp
         if (IsOn):
-            return a_mat + np.einsum("ijk,k->ij",self.dip_ints,mpol), True
+            print "Field on"
+            return a_mat + 2.0*np.einsum("kij,k->ij",self.dip_ints,mpol), True
         else :
             return a_mat, False
 
@@ -78,10 +80,10 @@ class fields:
             [<Mux>,<Muy>,<Muz>]
         """
         # At this point convert both into MO and then calculate the dipole...
-        rhoMO = np.dot(np.dot(C_.T,rho_),C_)
+        rhoMO = np.dot(np.dot(C_.T.conj(),rho_),C_)
         muMO1 = np.einsum("knm,mi->ink",self.dip_ints,C_)
         muMO = np.einsum("ink,nj->ijk",muMO1,C_)
         if (self.pol0 != None):
-            return np.einsum("ij,jik->k",rhoMO,muMO) - self.pol0
+            return 2.0*np.einsum("ij,jik->k",rhoMO,muMO) - self.pol0
         else:
-            return np.einsum("ij,jik->k",rhoMO,muMO)
+            return 2.0*np.einsum("ij,jik->k",rhoMO,muMO)
