@@ -22,6 +22,9 @@ class tdscf:
         """
         #To be Sorted later
         self.Enuc = the_scf_.e_tot - dft.rks.energy_elec(the_scf_,the_scf_.make_rdm1())[0]
+        self.eri3c = None
+        self.eri2c = None
+        self.n_aux = None
         #Global numbers
         self.t = 0.0
         self.n_ao = None
@@ -44,12 +47,88 @@ class tdscf:
         # Objects
         self.the_scf  = the_scf_
         self.mol = the_scf_.mol
+        self.auxmol_set()
         self.params = dict()
         self.initialcondition()
         self.field = fields(the_scf_, self.params)
         self.field.InitializeExpectation(self.rho,self.C)
         self.prop()
         return
+
+    def auxmol_set(self,auxbas = "weigend"):
+        auxmol = gto.Mole()
+        auxmol.atom = self.mol.atom
+        auxmol.basis = self.mol.basis
+        auxmol.build()
+        mol = self.mol
+        nao = self.n_ao = mol.nao_nr()
+        naux = self.n_aux = auxmol.nao_nr()
+
+
+        atm, bas, env = gto.conc_env(mol._atm, mol._bas, mol._env, auxmol._atm, auxmol._bas, auxmol._env)
+        eri3c = np.empty((nao,nao,naux))
+        pi = 0
+        for i in range(mol.nbas):
+            pj = 0
+            for j in range(mol.nbas):
+                pk = 0
+                for k in range(mol.nbas, mol.nbas+auxmol.nbas):
+                    shls = (i, j, k)
+                    buf = gto.getints_by_shell('cint3c2e_sph', shls, atm, bas, env)
+                    di, dj, dk = buf.shape
+                    eri3c[pi:pi+di,pj:pj+dj,pk:pk+dk] = buf
+                    pk += dk
+                pj += dj
+            pi += di
+
+        eri2c = np.empty((naux,naux))
+        pk = 0
+        for k in range(mol.nbas, mol.nbas+auxmol.nbas):
+            pl = 0
+            for l in range(mol.nbas, mol.nbas+auxmol.nbas):
+                shls = (k, l)
+                buf = gto.getints_by_shell('cint2c2e_sph', shls, atm, bas, env)
+                dk, dl = buf.shape
+                eri2c[pk:pk+dk,pl:pl+dl] = buf
+                pl += dl
+            pk += dk
+
+        self.eri3c = eri3c
+        self.eri2c = eri2c
+
+        return
+
+    def get_jk(self, P):
+
+        J = self.get_j(Pt)
+        K = self.get_k(Pt)
+
+
+        return J, K
+
+    def get_j(self,P):
+        naux = self.n_aux
+        nao = self.n_ao
+        rho = np.einsum('ijp,ij->p', self.eri3c, P)
+        rho = np.linalg.solve(self.eri2c, rho)
+        jmat = np.einsum('p,ijp->ij', rho, self.eri3c)
+
+        return jmat
+
+    def get_k(self,P):
+        naux = self.n_aux
+        nao = self.n_ao
+#        rP = P.real
+#        iP = P.imag
+        kpj = np.einsum('ijp,jk->ikp', self.eri3c, P)
+        pik = np.linalg.solve(self.eri2c, kpj.reshape(-1,naux).T.conj())
+        rkmat = np.einsum('pik,kjp->ij', pik.reshape(naux,nao,nao), self.eri3c)
+
+        #kpj = np.einsum('ijp,jk->ikp', self.eri3c, iP)
+        #pik = np.linalg.solve(self.eri2c, kpj.reshape(-1,naux).T.conj())
+        #ikmat = np.einsum('pik,kjp->ij', pik.reshape(naux,nao,nao), self.eri3c)
+
+        return rkmat #+ ikmat
 
     def initialcondition(self):
         print '''
@@ -111,7 +190,6 @@ class tdscf:
         self.H = self.the_scf.get_hcore()
         S = self.S
         P = self.the_scf.make_rdm1()
-        #P = 2 * np.dot(self.C[:,:n_occ],(self.C[:,:n_occ].T))
         Veff = dft.rks.get_veff(self.the_scf, None, P)
         self.F = self.H + Veff
         # Roothan's Equation
@@ -137,7 +215,7 @@ class tdscf:
             self.F = self.H + dft.rks.get_veff(self.the_scf, None, P)
             Eold = E
             E = self.energy(0.5*P) + self.Enuc
-            err = abs(E-Eold)#abs(sum(sum(self.F-Fold)))
+            err = abs(E-Eold)
             if (it%10 ==0):
                 print "Iteration:", it,"; Energy:",E,"; Error =",err
             it += 1
@@ -198,16 +276,18 @@ class tdscf:
         if (self.params["Method"] == "MMUT"):
             # First perform a fock build
             self.FockBuild( TransMat(self.rho, self.C, -1) )
-            print "DBG1", self.energy(TransMat(self.rho, self.C, -1))
+            #print "\nDBG1", self.energy(TransMat(self.rho, self.C, -1))+ self.Enuc
+            #print "DBG1c", self.energyc(TransMat(self.rho, self.C, -1))+ self.Enuc
             Fmo = TransMat(self.F,self.C)
             self.eigs, rot = np.linalg.eig(Fmo)
-            print self.eigs
+            #print self.eigs
             # rotate the densitites and C into this basis(MO).
             self.rho = TransMat(self.rho, rot)
             self.rhoM12 = TransMat(self.rhoM12, rot)
             self.C = np.dot(self.C , rot)
-            TMPPPP = TransMat(self.rho, self.C, -1)
-            print "DBG2", self.energy(TransMat(self.rho, self.C, -1),True)
+            #TMPPPP = TransMat(self.rho, self.C, -1)
+            #print "\nDBG2", self.energy(TransMat(self.rho, self.C, -1),True)+ self.Enuc
+            #print "DBG2c", self.energyc(TransMat(self.rho, self.C, -1),True)+ self.Enuc
             # Make the exponential propagator for the dipole.
             FmoPlusField, IsOn = self.field.ApplyField(Fmo,self.C,time)
             # For exponential propagator:
@@ -215,8 +295,9 @@ class tdscf:
             NewRhoM12 = self.Split_RK4_Step_MMUT(w, v, self.rhoM12, time, self.params["dt"], IsOn)
             NewRho = self.Split_RK4_Step_MMUT(w, v, NewRhoM12, time,self.params["dt"]/2.0, IsOn)
             self.rho = 0.5*(NewRho+(NewRho.T.conj()));
-            print TMPPPP - TransMat(self.rho, self.C, -1)
-            print "DBG2", self.energy(TransMat(self.rho, self.C, -1),True)
+            #print TMPPPP - TransMat(self.rho, self.C, -1)
+            #print "\nDBG3", self.energy(TransMat(self.rho, self.C, -1),True) + self.Enuc
+            #print "DBG3c", self.energyc(TransMat(self.rho, self.C, -1),True) + self.Enuc
             self.rhoM12 = 0.5*(NewRhoM12+(NewRhoM12.T.conj()))
         elif (self.params["Method"] == "RK4"):
             print "Finish step."
@@ -240,6 +321,7 @@ class tdscf:
         """
         This routine should not re-calculate the Fock matrix (like yesterday... )
         """
+        print "real P energy"
         Pt = 2.0*P
         Ecore = TrDot(Pt, self.H)
         J,K = scf.hf.get_jk(self.mol,Pt)
@@ -252,8 +334,26 @@ class tdscf:
         E = Ecore + Ecoul + Exc
         return E
 
+    def energyc(self,P,IfPrint=False):
+        """
+        This routine should not re-calculate the Fock matrix (like yesterday... )
+        """
+        print "Complex P energy"
+        Pt = 2.0*P
+        Ecore = TrDot(Pt, self.H)
+        J,K = self.get_jk(Pt)
+        Ecoul = 0.5*TrDot(Pt,J)
+        nn, Exc, Vx = self.the_scf._numint.nr_rks(self.mol, self.the_scf.grids, self.the_scf.xc, Pt, 0)
+        hyb = self.the_scf._numint.hybrid_coeff(self.the_scf.xc, spin=(self.mol.spin>0)+1)
+        Exc -= 0.5 * 0.5 * hyb * TrDot(Pt,K)
+        if (IfPrint):
+                print Ecore, Ecoul, Exc, -0.25*TrDot(Pt,K)
+        E = Ecore + Ecoul + Exc
+        E = Ecore + Ecoul -0.25*TrDot(Pt,K)
+        return E
+
     def loginstant(self):
-        tore = [self.t]+self.dipole().tolist()+[self.energy(TransMat(self.rho,self.C,-1))]
+        tore = [self.t]+self.dipole().tolist()+[self.energyc(TransMat(self.rho,self.C,-1))+self.Enuc]
         print tore
         return tore
 
