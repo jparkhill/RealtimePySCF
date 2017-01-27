@@ -58,13 +58,13 @@ class tdscf:
     def auxmol_set(self,auxbas = "weigend"):
         auxmol = gto.Mole()
         auxmol.atom = self.mol.atom
-        auxmol.basis = self.mol.basis
+        auxmol.basis = auxbas
         auxmol.build()
         mol = self.mol
         nao = self.n_ao = mol.nao_nr()
         naux = self.n_aux = auxmol.nao_nr()
-
-
+        #print nao
+        #print naux
         atm, bas, env = gto.conc_env(mol._atm, mol._bas, mol._env, auxmol._atm, auxmol._bas, auxmol._env)
         eri3c = np.empty((nao,nao,naux))
         pi = 0
@@ -93,15 +93,22 @@ class tdscf:
                 pl += dl
             pk += dk
 
-        self.eri3c = eri3c
-        self.eri2c = eri2c
+        self.eri3c = eri3c.astype(complex)
+        self.eri2c = eri2c.astype(complex)
 
         return
 
     def get_jk(self, P):
+        '''
+        Args:
+            P: AO density matrix
 
-        J = self.get_j(Pt)
-        K = self.get_k(Pt)
+        Returns:
+            J: Coulomb matrix
+            K: Exchange matrix
+        '''
+        J = self.get_j(P)
+        K = self.get_k(P)
 
 
         return J, K
@@ -118,8 +125,10 @@ class tdscf:
     def get_k(self,P):
         naux = self.n_aux
         nao = self.n_ao
-#        rP = P.real
-#        iP = P.imag
+        #rP = np.zeros((nao,nao)).astype(complex)
+        #iP = np.zeros((nao,nao)).astype(complex)
+        #rP += P.real
+        #iP += 1j*P.imag
         kpj = np.einsum('ijp,jk->ikp', self.eri3c, P)
         pik = np.linalg.solve(self.eri2c, kpj.reshape(-1,naux).T.conj())
         rkmat = np.einsum('pik,kjp->ij', pik.reshape(naux,nao,nao), self.eri3c)
@@ -154,8 +163,8 @@ class tdscf:
         '''
         Read the file and fill the params dictionary
         '''
-        self.params["dt"] = 0.02
-        self.params["MaxIter"] = 10000000
+        self.params["dt"] =  0.02
+        self.params["MaxIter"] = 5000#1000000000
         self.params["Model"] = "TDDFT"
         self.params["Method"] = "MMUT"
         self.params["ExDir"] = 1.0
@@ -165,7 +174,9 @@ class tdscf:
         self.params["FieldFreq"] = 1.1
         self.params["Tau"] = 0.07
         self.params["tOn"] = 7.0*self.params["Tau"]
+        self.params["StatusEvery"] = 1000
         # Here they should be read from disk.
+        print self.params
         return
 
     def InitializeLiouvillian(self):
@@ -174,9 +185,12 @@ class tdscf:
         '''
         S = self.S = self.the_scf.get_ovlp()
         self.X = MatrixPower(S,-1./2.)
-        self.C = self.X # Initial set of orthogonal coordinates.
+        #self.X = scipy.linalg.fractional_matrix_power(S,-1./2.)
+        self.C = self.X.copy() # Initial set of orthogonal coordinates.
         self.InitFockBuild()
-        self.rhoM12 = self.rho = 0.5*np.diag(self.the_scf.mo_occ)
+        self.rho = 0.5*np.diag(self.the_scf.mo_occ).astype(complex)
+        self.rhoM12 = self.rho.copy()
+
         return
 
     def InitFockBuild(self):
@@ -184,45 +198,65 @@ class tdscf:
         Using Roothan's equation to build a Fock matrix and initial density matrix
         '''
         n_occ = self.n_occ
-        Ne = self.n_e = 2 * n_occ
+        Ne = self.n_e = 2.0 * n_occ
         err = 100
         it = 0
         self.H = self.the_scf.get_hcore()
-        S = self.S
+        S = self.S.copy()
         P = self.the_scf.make_rdm1()
-        Veff = dft.rks.get_veff(self.the_scf, None, P)
-        self.F = self.H + Veff
+        #Veff = dft.rks.get_veff(self.the_scf, None, P)
+        #self.F = self.H + Veff
+        J,K = self.get_jk(P)
+        self.F = self.H + J - 0.5*K
         # Roothan's Equation
         # Question: Does Fock matrix needs to be solved in MO basis?
         # for the time being anything goes...
         # MO basis is easier to implement.
-        E = self.energy(P)+ self.Enuc
+        E = self.energyc(P)+ self.Enuc
         while (err > 10**-10):
             Fold = self.F
-            eigs, C = scipy.linalg.eigh(self.F, self.S)
-            #idx = self.eigs.argsort()
-            #self.eigs.sort()
-            #self.C = self.C[:,idx]
-
-            #self.C = self.C.astype(np.complex)
-            #for i in range(self.n_mo):
-            #    self.C[:,i] *= np.exp(1.j*np.random.random())
-        #    C = self.C * e**(1j * 0.1)
+            eigs, C = scipy.linalg.eig(self.F, self.S)#This routine gives C(LAOxMO); wrong density
+            #eigs, C = scipy.linalg.eigh(self.F, self.S)#This routine gives C(AOxMO); and right density
+            #idx = eigs.argsort()
+            #eigs.sort()
+            #C = C[:,idx]
             Pold = P
-            P = 2 * np.dot(C[:,:n_occ],C[:,:n_occ].T.conj())
+            P = 2.0 * TransMat(np.dot(C[:,:n_occ],C[:,:n_occ].T.conj()),self.X) #X(LAO,AO) # thus in AO basis
+            #P = 2.0 * np.dot(C[:,:n_occ],C[:,:n_occ].T.conj()) # AO Basis if scipy.eigh # LAO basis if scipy.eig
             P = 0.6*Pold + 0.4*P
-            P = Ne * P / (TrDot(P, self.S))
-            self.F = self.H + dft.rks.get_veff(self.the_scf, None, P)
+            #print np.dot(self.X,self.X.T) # X is not unitary matrix
+            #print (TrDot(P, self.S))
+            #P = Ne * P / (TrDot(P, self.S)) # AO
+            #self.F = self.H + dft.rks.get_veff(self.the_scf, None, P)
+            #print TransMat(P,C)
+            J,K = self.get_jk(P)
+            self.F = self.H + J - 0.5*K
             Eold = E
-            E = self.energy(0.5*P) + self.Enuc
+            E = self.energyc(0.5*P) + self.Enuc # energy uses AO basis
+            #print "Rho(MO)\n", TransMat(P,np.dot(self.X.T.conj(),C)) # X.T(AOxLAO)*C(LAOxMO) = (AOxMO)
+            #print E
             err = abs(E-Eold)
             if (it%10 ==0):
                 print "Iteration:", it,"; Energy:",E,"; Error =",err
             it += 1
-        self.eigs = eigs
-        self.C = C
-        P = 2 * np.dot(self.C[:,:n_occ],self.C[:,:n_occ].T.conj())
+        P = 2.0 * np.dot(C[:,:n_occ],C[:,:n_occ].T.conj()) # AO Basis if scipy.eigh # LAO basis if scipy.eig
+        print "\n\nNe(if right P(AO)):",(TrDot(P, self.S))
+        Pm = TransMat(P,C,-1) #C(LAOxMO)
+        print "Rho(MO)",Pm
+        print "Ne(MO)", np.trace(Pm)
+        eigs, C = scipy.linalg.eigh(self.F, self.S) # replace orignal C(LAOxMO) with new C(AOxMO)
+        Pa = TransMat(Pm,C,-1)
+        print "Ne(AO)", TrDot(Pa,self.S)
+        print "\n\n"
+        #print "Ne(if right P(AO)):",(TrDot(P, self.S))
+        self.eigs = eigs.copy()
+        self.C = C.copy()
+        # C(AOxMO), X(AO,LAO) -> V(LAOxMO)
+        self.V = np.dot(self.X.T.conj(),self.C)
+        P = 2 * np.dot(self.C[:,:n_occ],self.C[:,:n_occ].T.conj()) # C(AOxMO)
         print "Energy:",E
+        #print self.energy(0.5*P,True)+ self.Enuc
+        #print self.energyc(0.5*P,True)+ self.Enuc
         print "Ne:", TrDot(P, S)
         if (0):
             print "Checking MO=>AO"
@@ -244,11 +278,38 @@ class tdscf:
         self.F = self.H + dft.rks.get_veff(self.the_scf, None, 2.0*P)
         return  self.F
 
+    def FockBuildc(self,P):
+        """
+        Updates self.F given current self.rho (both complex.)
+        Args:
+            P = AO density matrix.
+        Returns:
+            Fock matrix(ao) . Updates self.F
+        """
+
+        #Pa =  TransMat(P,self.X)
+        #print "Rho(AO)", Pa
+        #print TrDot(Pa,self.S)
+        #print "Rho(MO)",TransMat(P,self.C)
+        Pt = 2.0*P
+        #print "Rho(AO)",Pt
+        #print "Ne",TrDot(Pt,self.S)
+        J,K = self.get_jk(Pt)
+        self.F = self.H + 0.5*(J+J.T.conj()) - 0.5*(0.5*(K + K.T.conj()))
+        #print "H",TransMat(self.H,self.C)
+        #print "J",TransMat(J,self.C)
+        #print "K",TransMat(K,self.C)
+        # C(AOxMO), X(AO,LAO) -> V(LAOxMO)
+        #print "\n\n"
+        #self.F = 0.5 * F
+        return  self.F
+
     def Split_RK4_Step_MMUT(self, w, v , oldrho , time, dt ,IsOn):
         Ud = np.exp(w*(-0.5j)*dt);
         U = TransMat(np.diag(Ud),v,-1)
         RhoHalfStepped = TransMat(oldrho,U,-1)
         # If any TCL propagation occurs...
+
         DontDo="""
         SplitLiouvillian( RhoHalfStepped, k1,tnow,IsOn);
         v2 = (dt/2.0) * k1;
@@ -272,35 +333,68 @@ class tdscf:
 #        print newrho
         return newrho
 
+    def rhodot(self,rho,time,F):
+        Ft, IsOn = self.field.ApplyField(F,self.C,time)
+        #print rho
+        kt = -1.j*(np.dot(Ft,rho) - np.dot(rho,Ft))
+        #print kt
+        return kt
+
     def TDDFTstep(self,time):
+        #self.rho (MO basis)
         if (self.params["Method"] == "MMUT"):
             # First perform a fock build
-            self.FockBuild( TransMat(self.rho, self.C, -1) )
-            #print "\nDBG1", self.energy(TransMat(self.rho, self.C, -1))+ self.Enuc
-            #print "DBG1c", self.energyc(TransMat(self.rho, self.C, -1))+ self.Enuc
+            self.FockBuildc( TransMat(self.rho, self.C, -1) )
             Fmo = TransMat(self.F,self.C)
-            self.eigs, rot = np.linalg.eig(Fmo)
-            #print self.eigs
-            # rotate the densitites and C into this basis(MO).
-            self.rho = TransMat(self.rho, rot)
-            self.rhoM12 = TransMat(self.rhoM12, rot)
+            self.eigs, rot = np.linalg.eig(Fmo)#,self.S)
+            #self.eigs, rot = scipy.linalg.eig(Fmo,self.S)
+            # rotate the densitites and C into this basis from MO.
+            # rot(MOxTO) -> Crot(AOxTO)
+            self.rho = TransMat(self.rho , rot)
+            self.rhoM12 = TransMat(self.rhoM12 , rot)
             self.C = np.dot(self.C , rot)
-            #TMPPPP = TransMat(self.rho, self.C, -1)
-            #print "\nDBG2", self.energy(TransMat(self.rho, self.C, -1),True)+ self.Enuc
-            #print "DBG2c", self.energyc(TransMat(self.rho, self.C, -1),True)+ self.Enuc
             # Make the exponential propagator for the dipole.
+            # C (AOxMO)
             FmoPlusField, IsOn = self.field.ApplyField(Fmo,self.C,time)
             # For exponential propagator:
-            w,v = np.linalg.eig(FmoPlusField)
+            w,v = np.linalg.eig(FmoPlusField)#,self.S)
+            #w,v = scipy.linalg.eig(FmoPlusField,self.S)
+            #print FmoPlusField
             NewRhoM12 = self.Split_RK4_Step_MMUT(w, v, self.rhoM12, time, self.params["dt"], IsOn)
             NewRho = self.Split_RK4_Step_MMUT(w, v, NewRhoM12, time,self.params["dt"]/2.0, IsOn)
             self.rho = 0.5*(NewRho+(NewRho.T.conj()));
-            #print TMPPPP - TransMat(self.rho, self.C, -1)
-            #print "\nDBG3", self.energy(TransMat(self.rho, self.C, -1),True) + self.Enuc
-            #print "DBG3c", self.energyc(TransMat(self.rho, self.C, -1),True) + self.Enuc
             self.rhoM12 = 0.5*(NewRhoM12+(NewRhoM12.T.conj()))
+            #print "RHO(MO)\n",self.rho
         elif (self.params["Method"] == "RK4"):
-            print "Finish step."
+            dt = self.params["dt"]
+            # First perform a fock build
+            self.FockBuildc( TransMat(self.rho, self.C, -1) )
+            Fmo = TransMat(self.F,self.C)
+            k1 = self.rhodot(self.rho,time,Fmo)
+            v2 = (0.5 * dt)*k1
+            v2 += self.rho
+            #print Fmo
+            self.FockBuildc( TransMat(v2, self.C, -1) )
+            Fmo = TransMat(self.F,self.C)
+            k2 = self.rhodot(v2, time + 0.5*dt,Fmo)
+            v3 = (0.5 * dt)*k2
+            v3 += self.rho
+
+            self.FockBuildc( TransMat(v3, self.C, -1) )
+            Fmo = TransMat(self.F,self.C)
+            k3 = self.rhodot(v3, time + 0.5*dt,Fmo)
+            v4 = (1.0 * dt)*k3
+            v4 += self.rho
+
+            self.FockBuildc( TransMat(v4, self.C, -1) )
+            Fmo = TransMat(self.F,self.C)
+            k4 = self.rhodot(v4, time + dt,Fmo)
+
+            drho = dt/6.0 * (k1 + 2.0*k2 + 2.0*k3 + k4)
+            self.rho += drho
+            self.rho = 0.5 * (self.rho + self.rho.T.conj())
+            print "t",time, "\n ",self.rho
+            #print np.trace(self.rho)
         else:
             raise Exception("Unknown Method...")
         return
@@ -315,6 +409,7 @@ class tdscf:
         return
 
     def dipole(self):
+        # self.rho (MO), self.C (AOxMO)
         return self.field.Expectation(self.rho, self.C)
 
     def energy(self,P,IfPrint=False):
@@ -338,34 +433,47 @@ class tdscf:
         """
         This routine should not re-calculate the Fock matrix (like yesterday... )
         """
-        print "Complex P energy"
+        #print "Complex P energy"
         Pt = 2.0*P
         Ecore = TrDot(Pt, self.H)
         J,K = self.get_jk(Pt)
         Ecoul = 0.5*TrDot(Pt,J)
-        nn, Exc, Vx = self.the_scf._numint.nr_rks(self.mol, self.the_scf.grids, self.the_scf.xc, Pt, 0)
-        hyb = self.the_scf._numint.hybrid_coeff(self.the_scf.xc, spin=(self.mol.spin>0)+1)
-        Exc -= 0.5 * 0.5 * hyb * TrDot(Pt,K)
+        #nn, Exc, Vx = self.the_scf._numint.nr_rks(self.mol, self.the_scf.grids, self.the_scf.xc, Pt, 0)
+        #hyb = self.the_scf._numint.hybrid_coeff(self.the_scf.xc, spin=(self.mol.spin>0)+1)
+        #Exc -= 0.5 * 0.5 * hyb * TrDot(Pt,K)
         if (IfPrint):
-                print Ecore, Ecoul, Exc, -0.25*TrDot(Pt,K)
-        E = Ecore + Ecoul + Exc
-        E = Ecore + Ecoul -0.25*TrDot(Pt,K)
-        return E
+                print Ecore, Ecoul, -0.25*TrDot(Pt,K)
+        #E = Ecore + Ecoul + Exc #RKS Energy
+        E = Ecore + Ecoul -0.25*TrDot(Pt,K)# HF Energy
+        return E.real
 
-    def loginstant(self):
-        tore = [self.t]+self.dipole().tolist()+[self.energyc(TransMat(self.rho,self.C,-1))+self.Enuc]
-        print tore
+    def loginstant(self,iter):
+        np.set_printoptions(precision = 7)
+        tore = str(self.t)+" "+str(self.dipole().real).rstrip(']').lstrip('[]')+ " " +str(self.energyc(TransMat(self.rho,self.C,-1),False)+self.Enuc)
+        #print tore
+        if iter%self.params["StatusEvery"] ==0:
+            print 't:', self.t, "    Energy:",self.energyc(TransMat(self.rho,self.C,-1)).real+self.Enuc
+            print('Dipole moment(X, Y, Z, au): %8.5f, %8.5f, %8.5f' %(self.dipole().real[0],self.dipole().real[1],self.dipole().real[2]))
         return tore
 
     def prop(self):
         """
         The main tdscf propagation loop.
         """
+
+
         iter = 0
         self.t = 0
+        f = open('log.dat','a')
+        #w,v = scipy.linalg.eigh(self.F,self.S)
+        #print w
+        #print abs(w[0]-w[1])*27.2114
         while (iter<self.params["MaxIter"]):
             self.step(self.t)
-            self.log.append(self.loginstant())
+            #self.log.append(self.loginstant(iter))
+            f.write(self.loginstant(iter)+"\n")
             # Do logging.
             iter = iter + 1
             self.t = self.t + self.params["dt"]
+
+        f.close()
