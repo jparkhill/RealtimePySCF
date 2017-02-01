@@ -5,6 +5,10 @@ from func import *
 from pyscf import gto, dft, scf, ao2mo
 from tdfields import *
 from cmath import *
+from pyscf import lib
+import ctypes
+
+libtdscf = lib.load_library('libtdscf')
 
 class tdscf:
     """
@@ -43,6 +47,7 @@ class tdscf:
         self.X = None # AO => LAO
         self.V = None # LAO x current MO
         self.H = None # (ao X ao)  core hamiltonian.
+        self.B = None # for ee2
         self.log = []
 
         # Objects
@@ -52,7 +57,7 @@ class tdscf:
         self.params = dict()
         self.initialcondition()
         self.field = fields(the_scf_, self.params)
-        self.field.Update(self.Cinv)
+        #self.field.Update(self.Cinv)
         self.field.InitializeExpectation(self.rho,self.C)
         self.prop()
         return
@@ -95,8 +100,11 @@ class tdscf:
                 pl += dl
             pk += dk
 
-        self.eri3c = eri3c.astype(complex)
-        self.eri2c = eri2c.astype(complex)
+        self.eri3c = eri3c
+        self.eri2c = eri2c
+
+        RSinv = MatrixPower(eri2c,-0.5)
+        self.B = np.einsum('ijp,pq->ijq', self.eri3c, RSinv) # (AO,AO,n_aux)
 
         return
 
@@ -182,7 +190,7 @@ class tdscf:
         '''
         self.params["dt"] =  0.02
         self.params["MaxIter"] = 5000#1000000000
-        self.params["Model"] = "TDDFT"
+        self.params["Model"] = "EE2"#"TDDFT"
         self.params["Method"] = "RK4"#"MMUT"
         self.params["ExDir"] = 1.0
         self.params["EyDir"] = 1.0
@@ -202,13 +210,32 @@ class tdscf:
         '''
         S = self.S = self.the_scf.get_ovlp()
         self.X = MatrixPower(S,-1./2.)
+        self.H = self.the_scf.get_hcore()
         #self.X = scipy.linalg.fractional_matrix_power(S,-1./2.)
         self.C = self.X.copy() # Initial set of orthogonal coordinates.
-        self.InitFockBuild()
+        if (self.params["Model"] == "TDDFT"):
+            self.InitFockBuild()
+        elif(self.params["Model"] == "EE2"):
+            self.InitFockBuildC()
         self.rho = 0.5*np.diag(self.the_scf.mo_occ).astype(complex)
         self.rhoM12 = self.rho.copy()
 
         return
+
+    def InitFockBuildC(self):
+        '''
+        Transfer H,S,X,B to CPP
+        Initialize V matrix and eigs vec in CPP as well
+        Make Fockbuild
+        '''
+        F = np.zeros((self.n_ao,self.n_ao)).astype(complex)
+        libtdscf.Update1(\
+        self.H.ctypes.data_as(ctypes.c_void_p),self.S.ctypes.data_as(ctypes.c_void_p),\
+        self.X.ctypes.data_as(ctypes.c_void_p),self.B.ctypes.data_as(ctypes.c_void_p),F.ctypes.data_as(ctypes.c_void_p),\
+        ctypes.c_int(self.n_ao),ctypes.c_int(self.n_aux),ctypes.c_int(self.n_occ),\
+        ctypes.c_double(self.Enuc), ctypes.c_double(self.params["dt"]))
+
+        print "F\n",F
 
     def InitFockBuild(self):
         '''
@@ -368,6 +395,30 @@ class tdscf:
         self.F = self.H + 0.5*(J+J.T.conj()) - 0.5*(0.5*(K + K.T.conj()))
         return  self.F
 
+    def Fockbuildee2(self,P):
+        '''
+        Updates Fock matrix using ee2 Fockbuild routine
+        V_ is empty, F is empty
+        need V
+        Updating F, V_, V, C, eigs
+        make Vprime
+        '''
+        # Rotate all matrix
+        RhoT = self.Rho.T.copy() # Complex
+        V_ = np.zeros((n,n)).astype(complex)
+        VT = self.V.T.copy() # Complex
+        CT = self.C.T.copy() # Complex
+        XT = self.X.T.copy()
+        HT = self.H.T.copy()
+        FT = np.zeros((n,n)).astype(complex)
+
+
+        libtdscf.setupFock(RhoT.ctypes.data_as(ctypes.c_void_p),V_.ctypes.data_as(ctypes.c_void_p),VT.ctypes.data_as(ctypes.c_void_p))
+        V_T = V_.T.copy()
+        #cx_mat& Rho, cx_mat& V_, cx_mat& V, cx_mat& C, mat& X, mat& H, cube& BpqR, vec& eigs, int n2, int n_aux
+
+        return F
+
     def Split_RK4_Step_MMUT(self, w, v , oldrho , time, dt ,IsOn):
         Ud = np.exp(w*(-0.5j)*dt);
         U = TransMat(np.diag(Ud),v,-1)
@@ -501,6 +552,24 @@ class tdscf:
             raise Exception("Unknown Method...")
         return
 
+    def EE2step(self,time):
+        print "EE2 step"
+
+        if (self.params["Method"] == "MMUT"):
+            libtdscf.MMUT_step(self.rho.ctypes.data_as(ctypes.c_void_p), self.rhoM12.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(time))
+            # Rho and RhoM12 is updated
+
+        elif (self.params["Method"] == "RK4"):
+            #
+            something
+
+
+        quit()
+
+
+
+        return
+
     def step(self,time):
         """
         Performs a step
@@ -508,6 +577,8 @@ class tdscf:
         """
         if (self.params["Model"] == "TDDFT"):
             return self.TDDFTstep(time)
+        elif(self.params["Model"] == "EE2"):
+            return self.EE2step(time)
         return
 
     def dipole(self):
@@ -566,12 +637,12 @@ class tdscf:
         iter = 0
         self.t = 0
         f = open('log.dat','a')
-        w,v = scipy.linalg.eigh(self.H,self.S)
-        print "H eigval",w
-        w,v = scipy.linalg.eigh(self.F,self.S)
+        #w,v = scipy.linalg.eigh(self.H,self.S)
+        #print "H eigval",w
+        #w,v = scipy.linalg.eigh(self.F,self.S)
         #w,v = np.linalg.eigh(self.F)#,self.S)
-        print "EigenValues:", w
-        print "Energy Gap (eV)",abs(w[0]-w[1])*27.2114
+        #print "EigenValues:", w
+        #print "Energy Gap (eV)",abs(w[0]-w[1])*27.2114
         print "\n\nPropagation Begins"
         while (iter<self.params["MaxIter"]):
             self.step(self.t)
