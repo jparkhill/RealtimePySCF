@@ -13,6 +13,8 @@
   double Amp,Freq;
   double tau;
   double t0;
+  bool ApplyCw, ApplyImpulse;
+
 
   void updatefield(cx_mat& C)
   {
@@ -64,17 +66,28 @@
 				throw;
 			}
       //cout << ImpulseAmp(tnow) << endl;
-			arg += pol(0)*muxo*ImpulseAmp(tnow);
-			arg += pol(1)*muyo*ImpulseAmp(tnow);
-			arg += pol(2)*muzo*ImpulseAmp(tnow);
+			arg += (pol(0)*muxo+pol(1)*muyo+pol(2)*muzo)*ImpulseAmp(tnow);
+			//arg += pol(1)*muyo*ImpulseAmp(tnow);
+			//arg += pol(2)*muzo*ImpulseAmp(tnow);
 		}
 		else
 			return;
   }
 
+  void CwLaser(cx_mat& arg, const double& tnow)
+  {
+  	if (tnow>0.0)
+  	{
+  		arg += (pol(0)*muxo+pol(1)*muyo+pol(2)*muzo)*Amp*cos(Freq*tnow);
+  	}
+  }
+
   void ApplyField(cx_mat& arg, double tnow)
   {
-    Impulse(arg,tnow);
+    if(ApplyImpulse)
+      Impulse(arg,tnow);
+    if(ApplyCw)
+      CwLaser(arg,tnow);
   }
 
 

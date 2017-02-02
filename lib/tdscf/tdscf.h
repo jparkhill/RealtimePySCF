@@ -36,21 +36,15 @@ cx_mat IntCur, VCur;
 
 std::complex<double> j(0.0,1.0);
 double thresh = pow(10.0,-11.0);
-    typedef std::complex<double> cx;
+typedef std::complex<double> cx;
     // Include cpp function here as well
-    int test1(int n, int n2);
-    void test1_2();
-    void test2();
-    void test3(double *a, double *b, double *c);
-    void test4(std::complex<double> *a, std::complex<double>  *b, std::complex<double>  *c,int n, int n2);
-
 
     void Initialize(double *h, double *s, double *x, double *b, std::complex<double> *f, int n_, int n_aux_,int nocc_, double Enuc, double dt);
     void InitFock(cx_mat& Rho,cx_mat& V_);
     void UpdateVi(const cx_mat& V_);
 
 
-    void FieldOn(cx *r, double *nuc_, cx *mux_, cx *muy_, cx *muz_, double x, double y, double z, double Amp_, double Freq_, double tau_, double t0_);
+    void FieldOn(cx *r, double *nuc_, cx *mux_, cx *muy_, cx *muz_, double x, double y, double z, double Amp_, double Freq_, double tau_, double t0_, int Imp, int Cw);
     void InitMu(cx *muxo_, cx *muyo_, cx *muzo_, double *mu0_);
 
 
@@ -58,7 +52,7 @@ double thresh = pow(10.0,-11.0);
     void Split_RK4_Step_MMUT(const arma::vec& eigval, const arma::cx_mat& Cu , const arma::cx_mat& oldrho, arma::cx_mat& newrho, const double tnow, const double dt);
 
 
-    void TDTDAstep(cx *r, double tnow);
+    void TDTDA_step(cx *r, double tnow);
     void tdtda(cx_mat& Rho_, cx_mat& RhoDot_, const double time, cx_mat& hmu);
 
     void Call(cx* v, cx* c);

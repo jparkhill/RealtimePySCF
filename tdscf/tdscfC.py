@@ -25,7 +25,6 @@ class tdscfC:
             Nothing.
         """
 
-        print "TDSCF EE2 C-Code"
         #To be Sorted later
         self.Enuc = the_scf_.e_tot - dft.rks.energy_elec(the_scf_,the_scf_.make_rdm1())[0]
         self.eri3c = None
@@ -49,7 +48,6 @@ class tdscfC:
         self.eigs = None # current fock eigenvalues.
         self.S = None # (ao X ao)
         self.C = None # (ao X mo)
-        self.Cinv = None #(mo x ao)
         self.X = None # AO => LAO
         self.V = None # LAO x current MO
         self.H = None # (ao X ao)  core hamiltonian.
@@ -137,20 +135,59 @@ class tdscfC:
         '''
         Read the file and fill the params dictionary
         '''
-        self.params["dt"] =  0.02
-        self.params["MaxIter"] = 5000
-        self.params["Model"] = "EE2"
+        import os.path
+        fileon = os.path.isfile('TDSCF.prm')
+        if(fileon):
+            prm = open('TDSCF.prm','r')
+
+
+        self.params["Model"] = "TDDFT"
         self.params["Method"] = "RK4"#"MMUT"
+
+        self.params["dt"] =  0.02
+        self.params["MaxIter"] = 15000
+
         self.params["ExDir"] = 1.0
         self.params["EyDir"] = 1.0
         self.params["EzDir"] = 1.0
-        self.params["FieldAmplitude"] = 0.001
-        self.params["FieldFreq"] = 1.1
+        self.params["FieldAmplitude"] = 0.01
+        self.params["FieldFreq"] = 0.9202
         self.params["Tau"] = 0.07
         self.params["tOn"] = 7.0*self.params["Tau"]
-        self.params["StatusEvery"] = 1000
+        self.params["ApplyImpulse"] = 1
+        self.params["ApplyCw"] = 0
+
+        self.params["StatusEvery"] = 5000
         # Here they should be read from disk.
-        print self.params
+        if(fileon):
+            for line in prm:
+                s = line.split()
+                if len(s) > 1:
+                    if s[0] == "MaxIter" or s[0] == str("ApplyImpulse") or s[0] == str("ApplyCw") or s[0] == str("StatusEvery"):
+                        self.params[s[0]] = int(s[1])
+                    elif s[0] == "Model" or s[0] == "Method":
+                        self.params[s[0]] = s[1]
+                    else:
+                        self.params[s[0]] = float(s[1])
+
+
+        print "============================="
+        print "         Parameters"
+        print "============================="
+        print "Model:", self.params["Model"]
+        print "Method:", self.params["Method"]
+        print "dt:", self.params["dt"]
+        print "MaxIter:", self.params["MaxIter"]
+        print "ExDir:", self.params["ExDir"]
+        print "EyDir:", self.params["EyDir"]
+        print "EzDir:", self.params["EzDir"]
+        print "FieldAmplitude:", self.params["FieldAmplitude"]
+        print "FieldFreq:", self.params["FieldFreq"]
+        print "Tau:", self.params["Tau"]
+        print "tOn:", self.params["tOn"]
+        print "ApplyImpulse:", self.params["ApplyImpulse"]
+        print "ApplyCw:", self.params["ApplyCw"]
+        print "=============================\n\n"
         return
 
     def InitializeLiouvillian(self):
@@ -227,7 +264,8 @@ class tdscfC:
         muz.ctypes.data_as(ctypes.c_void_p),\
         ctypes.c_double(self.field.pol[0]), ctypes.c_double(self.field.pol[1]), ctypes.c_double(self.field.pol[2]),\
         ctypes.c_double(self.params["FieldAmplitude"]), ctypes.c_double(self.params["FieldFreq"]),\
-        ctypes.c_double(self.params["Tau"]), ctypes.c_double(self.params["tOn"])
+        ctypes.c_double(self.params["Tau"]), ctypes.c_double(self.params["tOn"]),\
+        ctypes.c_int(self.params["ApplyImpulse"]), ctypes.c_int(self.params["ApplyCw"])
         )
 
         # Bring the field Components
@@ -252,7 +290,7 @@ class tdscfC:
 
 
 
-    def EE2step(self,time):
+    def TDDFTstep(self,time):
 
         if (self.params["Method"] == "MMUT"):
             libtdscf.MMUT_step(self.rho.ctypes.data_as(ctypes.c_void_p), self.rhoM12.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(time))
@@ -260,7 +298,7 @@ class tdscfC:
 
         elif (self.params["Method"] == "RK4"):
             newrho = self.rho.copy()
-            libtdscf.TDTDAstep(newrho.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(time))
+            libtdscf.TDTDA_step(newrho.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(time))
             self.rho = newrho.copy()
 
         else:
@@ -268,14 +306,26 @@ class tdscfC:
 
         return
 
+
+
+    def CIstep(self,time):
+        if(self.params["Method"] == "CIS"):
+            libtdscf.CIS_step()
+        else:
+            raise Exception("Unknown Method...")
+
+
     def step(self,time):
         """
         Performs a step
         Updates t, rho, and possibly other things.
         """
-        if (self.params["Model"] == "EE2"):
-            self.EE2step(time)
-
+        if (self.params["Model"] == "TDDFT"):
+            self.TDDFTstep(time)
+        elif (self.params["Model"] == "TDCI"):
+            self.CIstep(time)
+        else:
+            raise Exception("Unknown Method...")
         return
 
 
@@ -303,10 +353,17 @@ class tdscfC:
     def loginstant(self,iter):
         np.set_printoptions(precision = 7)
         tore = str(self.t)+" "+str(self.dipole().real).rstrip(']').lstrip('[]')+ " " +str(self.EnergyC(self.rho))
+        for i in range(self.n_ao):
+            tore += " " + str(self.rho[i,i].real)
 
+        # PrintOut
         if iter%self.params["StatusEvery"] ==0:
             print 't:', self.t, "    Energy:",self.EnergyC(self.rho).real
             print('Dipole moment(X, Y, Z, au): %8.5f, %8.5f, %8.5f' %(self.dipole().real[0],self.dipole().real[1],self.dipole().real[2]))
+            print "Pop:"
+            for i in range(self.n_ao):
+                print("%.5f" % self.rho[i,i].real),
+            print "\n"
         return tore
 
     def prop(self):

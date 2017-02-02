@@ -4,61 +4,6 @@ using namespace arma;
 #include "tdscf.h"
 #include "field.h"
 
-// shared variable (PUBLIC)
-int nn; // test
-
-// TDSCF
-
-
-
-int test1(int n, int n2)
-{
-
-  // Simple Addtion code
-  nn = n + n2;
-
-  return nn;
-}
-
-void test1_2()
-{
-  cout << "nn(CPP)" << nn << endl;
-}
-
-
-
-void test2()
-{
-  // Simple cout print statement
-  cout << "Hello" << endl;
-}
-
-// mat x mat
-void test3(double *a, double *b, double *c){
-
-  mat A(a,4,4);
-  mat B(b,4,4);
-  mat C(c,4,4);
-
-  C = A.t()*B.t();
-  mat Ct = C.t();
-  memcpy(c,Ct.memptr(),sizeof(double)*16);
-
-}
-// cx_mat x cx_mat
-void test4(std::complex<double> *a, std::complex<double>  *b, std::complex<double>  *c,int n, int n2){
-
-  cx_mat A(a,n,n);
-  cx_mat B(b,n,n);
-  cx_mat C(c,n,n);
-
-  C = A*B;
-  cx_mat Ct = C.t();
-  // memcpy update needs transpose
-  memcpy(c,Ct.memptr(),2*sizeof(double)*n2);
-
-}
-
 void Initialize(double *h, double *s, double *x, double *b, std::complex<double> *f, int n_, int n_aux_,int nocc_, double Enuc, double dt_)
 {
   // save the variables that does not change over the dynamics
@@ -225,8 +170,9 @@ std::transform(omp_in.begin( ),  omp_in.end( ),  omp_out.begin( ), omp_out.begin
   return Vprime;
 }
 
-void FieldOn(cx *r, double *nuc_, cx *mux_, cx *muy_, cx *muz_, double x, double y, double z, double Amp_, double Freq_, double tau_, double t0_)
+void FieldOn(cx *r, double *nuc_, cx *mux_, cx *muy_, cx *muz_, double x, double y, double z, double Amp_, double Freq_, double tau_, double t0_, int Imp, int Cw)
 {
+
   cx_mat Rho_(r,n,n);
 
   // mu
@@ -244,10 +190,12 @@ void FieldOn(cx *r, double *nuc_, cx *mux_, cx *muy_, cx *muz_, double x, double
   Freq = Freq_;
   tau = tau_;
   t0 = t0_;
-
+  ApplyImpulse = Imp;
+  ApplyCw = Cw;
 
   updatefield(C); // muo are prepared
   InitializeExpectation(Rho_);
+
 
 }
 
@@ -324,7 +272,7 @@ void Split_RK4_Step_MMUT(const arma::vec& eigval, const arma::cx_mat& Cu , const
 }
 
 
-void TDTDAstep(cx *r, double tnow)
+void TDTDA_step(cx *r, double tnow)
 {
   //cx_mat rtmp(r,n,n);
   cx_mat Rho_(r,n,n);

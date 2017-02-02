@@ -1,0 +1,15 @@
+Model	TDDFT
+Method	RK4
+
+dt	0.02
+MaxIter	5000
+
+ExDir	1.0
+EyDir	1.0
+EzDir	1.0
+FieldAmplitude	0.01
+FieldFreq	0.9202
+ApplyImpulse	1
+ApplyCw		0
+
+StatusEvery	2000
