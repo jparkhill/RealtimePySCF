@@ -29,6 +29,10 @@ class tdscf:
         self.eri3c = None
         self.eri2c = None
         self.n_aux = None
+        self.muxo = None
+        self.muyo = None
+        self.muzo = None
+        self.mu0 = None
         #Global numbers
         self.t = 0.0
         self.n_ao = None
@@ -59,6 +63,7 @@ class tdscf:
         self.field = fields(the_scf_, self.params)
         #self.field.Update(self.Cinv)
         self.field.InitializeExpectation(self.rho,self.C)
+        self.CField()
         self.prop()
         return
 
@@ -229,13 +234,61 @@ class tdscf:
         Make Fockbuild
         '''
         F = np.zeros((self.n_ao,self.n_ao)).astype(complex)
-        libtdscf.Update1(\
+        libtdscf.Initialize(\
         self.H.ctypes.data_as(ctypes.c_void_p),self.S.ctypes.data_as(ctypes.c_void_p),\
         self.X.ctypes.data_as(ctypes.c_void_p),self.B.ctypes.data_as(ctypes.c_void_p),F.ctypes.data_as(ctypes.c_void_p),\
         ctypes.c_int(self.n_ao),ctypes.c_int(self.n_aux),ctypes.c_int(self.n_occ),\
         ctypes.c_double(self.Enuc), ctypes.c_double(self.params["dt"]))
 
-        print "F\n",F
+        #print "F\n",F
+
+    def CField(self):
+
+        '''
+        setup field components in C
+        '''
+        mux = 2*self.field.dip_ints[0].astype(complex)
+        muy = 2*self.field.dip_ints[1].astype(complex)
+        muz = 2*self.field.dip_ints[2].astype(complex)
+        nuc = self.field.nuc_dip
+        #print "Nuc", nuc
+
+        libtdscf.FieldOn(\
+        self.rho.ctypes.data_as(ctypes.c_void_p),\
+        nuc.ctypes.data_as(ctypes.c_void_p),\
+        mux.ctypes.data_as(ctypes.c_void_p),\
+        muy.ctypes.data_as(ctypes.c_void_p),\
+        muz.ctypes.data_as(ctypes.c_void_p),\
+        ctypes.c_double(self.field.pol[0]), ctypes.c_double(self.field.pol[1]), ctypes.c_double(self.field.pol[2]),\
+        ctypes.c_double(self.params["FieldAmplitude"]), ctypes.c_double(self.params["FieldFreq"]),\
+        ctypes.c_double(self.params["Tau"]), ctypes.c_double(self.params["tOn"])
+        )
+
+        # Bring the field Components
+        n = self.n_ao
+        muxo = np.zeros((n,n)).astype(complex)
+        muyo = np.zeros((n,n)).astype(complex)
+        muzo = np.zeros((n,n)).astype(complex)
+        mu0 = np.zeros(3)
+
+        libtdscf.InitMu(\
+        muxo.ctypes.data_as(ctypes.c_void_p),\
+        muyo.ctypes.data_as(ctypes.c_void_p),\
+        muzo.ctypes.data_as(ctypes.c_void_p),\
+        mu0.ctypes.data_as(ctypes.c_void_p))
+
+        self.muxo = muxo.copy()
+        self.muyo = muyo.copy()
+        self.muzo = muzo.copy()
+        self.mu0 = mu0.copy()
+
+        #print muxo
+        #print muyo
+        #print muzo
+        #print mu0
+        #quit()
+
+        return
 
     def InitFockBuild(self):
         '''
@@ -553,7 +606,6 @@ class tdscf:
         return
 
     def EE2step(self,time):
-        print "EE2 step"
 
         if (self.params["Method"] == "MMUT"):
             libtdscf.MMUT_step(self.rho.ctypes.data_as(ctypes.c_void_p), self.rhoM12.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(time))
@@ -561,10 +613,12 @@ class tdscf:
 
         elif (self.params["Method"] == "RK4"):
             #
-            something
+            newrho = self.rho.copy()
+            libtdscf.TDTDAstep(newrho.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(time))
+            self.rho = newrho.copy()
+            #print self.rho
 
-
-        quit()
+        #quit()
 
 
 
@@ -581,9 +635,16 @@ class tdscf:
             return self.EE2step(time)
         return
 
+
+
+
     def dipole(self):
         # self.rho (MO), self.C (AOxMO)
-        return self.field.Expectation(self.rho, self.C)
+        dipole = [TrDot(self.rho,self.muxo),TrDot(self.rho,self.muyo),TrDot(self.rho,self.muzo)] - self.mu0
+        #print dipole.real
+
+        return dipole.real
+        #return self.field.Expectation(self.rho, self.C)
 
     def energy(self,P,IfPrint=False):
         """

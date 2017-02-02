@@ -11,6 +11,7 @@ class fields:
     """
     def __init__(self,the_scf_, params_):
         self.dip_ints = None # AO dipole integrals.
+        self.nuc_dip = None
         self.dip_mo = None # Nuclear dipole (AO)
         self.Generate(the_scf_)
         self.fieldAmplitude = params_["FieldAmplitude"]
@@ -26,10 +27,12 @@ class fields:
         Performs the required PYSCF calls to generate the AO basis dipole matrices.
         """
         self.dip_ints = the_scf.mol.intor('cint1e_r_sph', comp=3) # component,ao,ao.
-        #charges = the_scf.mol.atom_charges()
-        #coords  = the_scf.mol.atom_coords()
-        #self.nuc_dip = np.einsum('i,ix->x', charges, coords)
+        print "A dipole matrices\n",self.dip_ints
+        charges = the_scf.mol.atom_charges()
+        coords  = the_scf.mol.atom_coords()
+        self.nuc_dip = np.einsum('i,ix->x', charges, coords)
         return
+
     def Update(self,c_mat):
         '''
         Args:
