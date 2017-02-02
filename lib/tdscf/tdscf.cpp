@@ -114,6 +114,7 @@ void Initialize(double *h, double *s, double *x, double *b, std::complex<double>
 
   InitFock(Rho_,V_);
 
+  // Why am I doing this?
   memcpy(f,F.memptr(),2*sizeof(double)*n*n);
 
 }
@@ -143,6 +144,8 @@ void InitFock(cx_mat& Rho,cx_mat& V_)
   }
   FockBuild(Rho,V_);
   UpdateVi(V_);
+
+  eigs.t().print("EigenValues");
 
 }
 
@@ -196,6 +199,10 @@ std::transform(omp_in.begin( ),  omp_in.end( ),  omp_out.begin( ), omp_out.begin
   double Eone= real(trace(Rho*hx));
   double EJ= real(trace(Rho*Jx));
   double EK= real(trace(Rho*K));
+  // debug
+  //double EF = real(trace(Rho*F));
+  //double EFF = EF + nuclear_energy;
+  //cout << "FOCK ENERGY:" << EFF << endl;
   Ehf = Eone + EJ + EK + nuclear_energy;
 
   cx_mat Vprime; eigs.zeros();
@@ -364,10 +371,7 @@ void TDTDAstep(cx *r, double tnow)
 void tdtda(cx_mat& Rho_, cx_mat& RhoDot_, const double tnow, cx_mat& hmu)
 {
   cx_mat h = hmu;
-  // Apply the field
-  //if(Mus!=NULL)
   ApplyField(h,tnow);
-  //cout << "tnow(tdtda):" << tnow << endl;
 
 #if HASUDR
 #pragma omp declare reduction( + : cx_mat : \
@@ -421,9 +425,18 @@ std::transform(omp_in.begin( ),  omp_in.end( ),  omp_out.begin( ), omp_out.begin
   tmp=(J+K)*Rho0 - Rho0*(J+K);
   RhoDot_ +=  tmp;
 
+  // Debugging? Updating Fock to calculate Energy
+  //F = 1.0*h + J + K ;
 }
 
+void Call(cx* v, cx* c)
+{
 
+  cx_mat vt = V.t();
+  memcpy(v,vt.memptr(),2*sizeof(double)*n*n);
+  cx_mat ct = C.t();
+  memcpy(c,ct.memptr(),2*sizeof(double)*n*n);
+}
 
 void BuildSpinOrbitalV()
 {

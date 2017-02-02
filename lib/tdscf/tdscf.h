@@ -49,7 +49,7 @@ double thresh = pow(10.0,-11.0);
     void InitFock(cx_mat& Rho,cx_mat& V_);
     void UpdateVi(const cx_mat& V_);
 
-    
+
     void FieldOn(cx *r, double *nuc_, cx *mux_, cx *muy_, cx *muz_, double x, double y, double z, double Amp_, double Freq_, double tau_, double t0_);
     void InitMu(cx *muxo_, cx *muyo_, cx *muzo_, double *mu0_);
 
@@ -61,7 +61,7 @@ double thresh = pow(10.0,-11.0);
     void TDTDAstep(cx *r, double tnow);
     void tdtda(cx_mat& Rho_, cx_mat& RhoDot_, const double time, cx_mat& hmu);
 
-
+    void Call(cx* v, cx* c);
     bool cx_mat_equals(const arma::cx_mat& X,const arma::cx_mat& Y);
     void BuildSpinOrbitalV();
 

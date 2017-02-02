@@ -42,7 +42,7 @@
   void InitializeExpectation(const arma::cx_mat& pin)
 	{
 		mu_0=Expectation(pin,false);
-    (mu_0-mu_n).print("Initial Dipole:");
+    (mu_0-mu_n).t().print("Initial Dipole (x, y, z):");
 	}
 
   double ImpulseAmp(double tnow)
