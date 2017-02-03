@@ -17,10 +17,10 @@ def TestTDSCF():
     # Here finish an SCF calculation and pass it to TDSCF.
     mol = gto.Mole()
     mol.atom = pyscfatomstring
-    mol.basis = 'sto-6g'
+    mol.basis = 'sto-3g'
     mol.build()
     the_scf = pyscf.dft.RKS(mol)
-    the_scf.xc='PBE'
+    the_scf.xc='HF'
     print "Inital SCF finished. E=", the_scf.kernel()
     aprop = tdscf(the_scf)
     return
