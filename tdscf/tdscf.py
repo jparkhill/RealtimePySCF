@@ -5,6 +5,10 @@ from func import *
 from pyscf import gto, dft, scf, ao2mo
 from tdfields import *
 from cmath import *
+from pyscf import lib
+import ctypes
+
+libtdscf = lib.load_library('libtdscf')
 
 FsPerAu = 0.0241888
 
@@ -27,6 +31,10 @@ class tdscf:
         self.eri3c = None
         self.eri2c = None
         self.n_aux = None
+        self.muxo = None
+        self.muyo = None
+        self.muzo = None
+        self.mu0 = None
         #Global numbers
         self.t = 0.0
         self.n_ao = None
@@ -44,6 +52,7 @@ class tdscf:
         self.X = None # AO, LAO
         self.V = None # LAO, current MO
         self.H = None # (ao X ao)  core hamiltonian.
+        self.B = None # for ee2
         self.log = []
 
         # Objects
@@ -95,8 +104,11 @@ class tdscf:
                 pl += dl
             pk += dk
 
-        self.eri3c = eri3c.astype(complex)
-        self.eri2c = eri2c.astype(complex)
+        self.eri3c = eri3c
+        self.eri2c = eri2c
+
+        RSinv = MatrixPower(eri2c,-0.5)
+        self.B = np.einsum('ijp,pq->ijq', self.eri3c, RSinv) # (AO,AO,n_aux)
 
         return
 
@@ -218,6 +230,69 @@ class tdscf:
         self.rhoM12 = self.rho.copy()
         return
 
+    def InitFockBuildC(self):
+        '''
+        Transfer H,S,X,B to CPP
+        Initialize V matrix and eigs vec in CPP as well
+        Make Fockbuild
+        '''
+        F = np.zeros((self.n_ao,self.n_ao)).astype(complex)
+        libtdscf.Initialize(\
+        self.H.ctypes.data_as(ctypes.c_void_p),self.S.ctypes.data_as(ctypes.c_void_p),\
+        self.X.ctypes.data_as(ctypes.c_void_p),self.B.ctypes.data_as(ctypes.c_void_p),F.ctypes.data_as(ctypes.c_void_p),\
+        ctypes.c_int(self.n_ao),ctypes.c_int(self.n_aux),ctypes.c_int(self.n_occ),\
+        ctypes.c_double(self.Enuc), ctypes.c_double(self.params["dt"]))
+
+        #print "F\n",F
+
+    def CField(self):
+
+        '''
+        setup field components in C
+        '''
+        mux = 2*self.field.dip_ints[0].astype(complex)
+        muy = 2*self.field.dip_ints[1].astype(complex)
+        muz = 2*self.field.dip_ints[2].astype(complex)
+        nuc = self.field.nuc_dip
+        #print "Nuc", nuc
+
+        libtdscf.FieldOn(\
+        self.rho.ctypes.data_as(ctypes.c_void_p),\
+        nuc.ctypes.data_as(ctypes.c_void_p),\
+        mux.ctypes.data_as(ctypes.c_void_p),\
+        muy.ctypes.data_as(ctypes.c_void_p),\
+        muz.ctypes.data_as(ctypes.c_void_p),\
+        ctypes.c_double(self.field.pol[0]), ctypes.c_double(self.field.pol[1]), ctypes.c_double(self.field.pol[2]),\
+        ctypes.c_double(self.params["FieldAmplitude"]), ctypes.c_double(self.params["FieldFreq"]),\
+        ctypes.c_double(self.params["Tau"]), ctypes.c_double(self.params["tOn"])
+        )
+
+        # Bring the field Components
+        n = self.n_ao
+        muxo = np.zeros((n,n)).astype(complex)
+        muyo = np.zeros((n,n)).astype(complex)
+        muzo = np.zeros((n,n)).astype(complex)
+        mu0 = np.zeros(3)
+
+        libtdscf.InitMu(\
+        muxo.ctypes.data_as(ctypes.c_void_p),\
+        muyo.ctypes.data_as(ctypes.c_void_p),\
+        muzo.ctypes.data_as(ctypes.c_void_p),\
+        mu0.ctypes.data_as(ctypes.c_void_p))
+
+        self.muxo = muxo.copy()
+        self.muyo = muyo.copy()
+        self.muzo = muzo.copy()
+        self.mu0 = mu0.copy()
+
+        #print muxo
+        #print muyo
+        #print muzo
+        #print mu0
+        #quit()
+
+        return
+
     def InitFockBuild(self):
         '''
         Using Roothan's equation to build a Fock matrix and initial density matrix
@@ -264,6 +339,30 @@ class tdscf:
         print "Energy:",E
         print "Initial Fock Matrix(MO)\n", TransMat(self.F,self.V)
         return Plao
+
+    def Fockbuildee2(self,P):
+        '''
+        Updates Fock matrix using ee2 Fockbuild routine
+        V_ is empty, F is empty
+        need V
+        Updating F, V_, V, C, eigs
+        make Vprime
+        '''
+        # Rotate all matrix
+        RhoT = self.Rho.T.copy() # Complex
+        V_ = np.zeros((n,n)).astype(complex)
+        VT = self.V.T.copy() # Complex
+        CT = self.C.T.copy() # Complex
+        XT = self.X.T.copy()
+        HT = self.H.T.copy()
+        FT = np.zeros((n,n)).astype(complex)
+
+
+        libtdscf.setupFock(RhoT.ctypes.data_as(ctypes.c_void_p),V_.ctypes.data_as(ctypes.c_void_p),VT.ctypes.data_as(ctypes.c_void_p))
+        V_T = V_.T.copy()
+        #cx_mat& Rho, cx_mat& V_, cx_mat& V, cx_mat& C, mat& X, mat& H, cube& BpqR, vec& eigs, int n2, int n_aux
+
+        return F
 
     def Split_RK4_Step_MMUT(self, w, v , oldrho , time, dt ,IsOn):
         Ud = np.exp(w*(-0.5j)*dt);
@@ -376,6 +475,25 @@ class tdscf:
             raise Exception("Unknown Method...")
         return
 
+    def EE2step(self,time):
+
+        if (self.params["Method"] == "MMUT"):
+            libtdscf.MMUT_step(self.rho.ctypes.data_as(ctypes.c_void_p), self.rhoM12.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(time))
+            # Rho and RhoM12 is updated
+
+        elif (self.params["Method"] == "RK4"):
+            #
+            newrho = self.rho.copy()
+            libtdscf.TDTDAstep(newrho.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(time))
+            self.rho = newrho.copy()
+            #print self.rho
+
+        #quit()
+
+
+
+        return
+
     def step(self,time):
         """
         Performs a step
@@ -383,11 +501,20 @@ class tdscf:
         """
         if (self.params["Model"] == "TDDFT"):
             return self.TDDFTstep(time)
+        elif(self.params["Model"] == "EE2"):
+            return self.EE2step(time)
         return
+
+
+
 
     def dipole(self):
         # self.rho (MO), self.C (AOxMO)
-        return self.field.Expectation(self.rho, self.C)
+        dipole = [TrDot(self.rho,self.muxo),TrDot(self.rho,self.muyo),TrDot(self.rho,self.muzo)] - self.mu0
+        #print dipole.real
+
+        return dipole.real
+        #return self.field.Expectation(self.rho, self.C)
 
     def energy(self,Plao,IfPrint=False):
         """
