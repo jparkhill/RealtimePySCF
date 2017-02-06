@@ -8,7 +8,7 @@ from cmath import *
 from pyscf import lib
 import ctypes
 
-libtdscf = lib.load_library('libtdscf')
+#libtdscf = lib.load_library('libtdscf')
 
 FsPerAu = 0.0241888
 
@@ -504,9 +504,6 @@ class tdscf:
         elif(self.params["Model"] == "EE2"):
             return self.EE2step(time)
         return
-
-
-
 
     def dipole(self):
         # self.rho (MO), self.C (AOxMO)

@@ -8,7 +8,7 @@ from cmath import *
 from pyscf import lib
 import ctypes
 
-libtdscf = lib.load_library('libtdscf')
+#libtdscf = lib.load_library('libtdscf')
 
 class tdscfC:
     """
