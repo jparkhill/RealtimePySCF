@@ -17,7 +17,7 @@ a TDSCF extension of PYSCF incorporating TCL code etc....
 - To install the C-routines, do the same in /lib 
 
 ## To use. 
-- As of now have installed pyscf and python test.py  
+- As of now have installed pyscf and `python test.py`  
 
 ## Goals: 
 - Pure Python TDSCF working. 
