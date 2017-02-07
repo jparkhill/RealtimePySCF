@@ -1,8 +1,8 @@
-Model	TDHF
-Method	MMUT
+Model  TDCI
+Method CIS 
 
 dt	0.02
-MaxIter	5000
+MaxIter	100
 
 ExDir	1.0
 EyDir	1.0
@@ -12,4 +12,4 @@ FieldFreq	0.9202
 ApplyImpulse	1
 ApplyCw		0
 
-StatusEvery	2000
+StatusEvery	10

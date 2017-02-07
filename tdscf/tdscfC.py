@@ -84,7 +84,7 @@ class tdscfC:
         self.mol = the_scf_.mol
         self.auxmol_set()
         self.params = dict()
-        self.initialcondition(prm)
+        self.initialcondition()
         self.field = fields(the_scf_, self.params)
         self.field.InitializeExpectation(self.rho,self.C)
         self.CField()
@@ -136,7 +136,7 @@ class tdscfC:
 
         return
 
-    def initialcondition(self,prm):
+    def initialcondition(self):
         print '''
         ===================================
         |  Realtime TDSCF module          |
@@ -152,49 +152,64 @@ class tdscfC:
         n_mo = self.n_mo = n_ao # should be fixed.
         n_occ = self.n_occ = int(sum(self.the_scf.mo_occ)/2)
         print "n_ao:", n_ao, "n_mo:", n_mo, "n_occ:", n_occ
-        self.ReadParams(prm)
+        self.ReadParams()
         self.InitializeLiouvillian()
         return
 
-    def GetValues(self,params,key,default,typ):
-    	# Try to get value from the dictionary
-    	str_val = "None"
-    	if key in params:
-        	if params[key]!=None:
-         		str_val = params[key]
-			print key, ": ", str_val
-    	# If nothing found - use default value
-    	if str_val!="None":
-       		pass
-   	else:
-       		str_val = default
-       		print key, ": ", str_val, "(default)"
-    	# Convert string to desired data type
-  	if typ=="s":
-      		return str_val
-   	elif typ=="f":
-       		return float(str_val)
-   	elif typ=="i":
-       		return int(float(str_val))
-
-    def ReadParams(self,prm):
+    def ReadParams(self):
         '''
         Read the file and fill the params dictionary
         '''
-        self.params["dt"] = self.GetValues(prm,"dt","0.02","f")
-        self.params["MaxIter"] = self.GetValues(prm,"MaxIter","1000","i")
-        self.params["Model"] = self.GetValues(prm,"Model","TDDFT","s")
-        self.params["Method"] = self.GetValues(prm,"Method","MMUT","s")
-        self.params["ExDir"] = self.GetValues(prm,"ExDir","1.0","f")
-        self.params["EyDir"] = self.GetValues(prm,"EyDir","1.0","f")
-        self.params["EzDir"] = self.GetValues(prm,"EzDir","1.0","f")
-        self.params["FieldAmplitude"] = self.GetValues(prm,"FieldAmplitude","0.001","f")
-        self.params["FieldFreq"] = self.GetValues(prm,"FieldFreq","1.1","f")
-        self.params["Tau"] = self.GetValues(prm,"Tau","0.07","f")
+        import os.path
+        fileon = os.path.isfile('TDSCF.prm')
+        if(fileon):
+            prm = open('TDSCF.prm','r')
+        self.params["Model"] = "TDDFT" #"TDHF"; the difference of Fock matrix and energy
+        self.params["Method"] = "MMUT"#"MMUT"
+
+        self.params["dt"] =  0.02
+        self.params["MaxIter"] = 15000
+
+        self.params["ExDir"] = 1.0
+        self.params["EyDir"] = 1.0
+        self.params["EzDir"] = 1.0
+        self.params["FieldAmplitude"] = 0.01
+        self.params["FieldFreq"] = 0.9202
+        self.params["Tau"] = 0.07
         self.params["tOn"] = 7.0*self.params["Tau"]
-        self.params["StatusEvery"] = self.GetValues(prm,"StatusEvery","100","i")
+        self.params["ApplyImpulse"] = 1
+        self.params["ApplyCw"] = 0
+
+        self.params["StatusEvery"] = 5000
         # Here they should be read from disk.
-        #print self.params
+        if(fileon):
+            for line in prm:
+                s = line.split()
+                if len(s) > 1:
+                    if s[0] == "MaxIter" or s[0] == str("ApplyImpulse") or s[0] == str("ApplyCw") or s[0] == str("StatusEvery"):
+                        self.params[s[0]] = int(s[1])
+                    elif s[0] == "Model" or s[0] == "Method":
+                        self.params[s[0]] = s[1]
+                    else:
+                        self.params[s[0]] = float(s[1])
+
+        print "============================="
+        print "         Parameters"
+        print "============================="
+        print "Model:", self.params["Model"]
+        print "Method:", self.params["Method"]
+        print "dt:", self.params["dt"]
+        print "MaxIter:", self.params["MaxIter"]
+        print "ExDir:", self.params["ExDir"]
+        print "EyDir:", self.params["EyDir"]
+        print "EzDir:", self.params["EzDir"]
+        print "FieldAmplitude:", self.params["FieldAmplitude"]
+        print "FieldFreq:", self.params["FieldFreq"]
+        print "Tau:", self.params["Tau"]
+        print "tOn:", self.params["tOn"]
+        print "ApplyImpulse:", self.params["ApplyImpulse"]
+        print "ApplyCw:", self.params["ApplyCw"]
+        print "=============================\n\n"
         return
 
     def InitializeLiouvillian(self):
