@@ -5,12 +5,14 @@ a TDSCF extension of PYSCF incorporating TCL code etc....
 
 ## Requirements 
 - Armadillo (download the lib and use CMake to install)
+
 ```	cd /PATHTOARMA/
 	mkdir build 
 	cd build 
 	cmake .. 
 	make install 
 ```
+
 - To install the C-routines, do the same in /lib 
 
 ## To use. 
