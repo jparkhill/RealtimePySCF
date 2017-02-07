@@ -1,5 +1,5 @@
-Model	TDDFT
-Method	RK4
+Model	TDHF
+Method	MMUT
 
 dt	0.02
 MaxIter	5000

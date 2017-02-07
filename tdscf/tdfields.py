@@ -43,7 +43,6 @@ class fields:
         self.dip_mo[0] = TransMat(self.dip_ints[0],c_mat,-1)
         self.dip_mo[1] = TransMat(self.dip_ints[1],c_mat,-1)
         self.dip_mo[2] = TransMat(self.dip_ints[2],c_mat,-1)
-
         return
 
     def ImpulseAmp(self,time):
@@ -85,12 +84,11 @@ class fields:
         """
         amp, IsOn = self.ImpulseAmp(time)
         mpol = self.pol * amp
-        mu = TransMat(2.0*np.einsum("kij,k->ij",self.dip_ints,mpol),c_mat,-1)
         if (IsOn):
             print "Field on"
             #print "perturbations\n", mu
             #print "perturbations(MO directly)\n", np.einsum("kij,k->ij",self.dip_mo,mpol)
-            return a_mat + 2.0*TransMat(np.einsum("kij,k->ij",self.dip_ints,mpol),c_mat,-1), True
+            return a_mat + 2.0*TransMat(np.einsum("kij,k->ij",self.dip_ints,mpol),c_mat), True
         else :
             return a_mat, False
 

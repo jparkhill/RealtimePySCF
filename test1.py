@@ -7,8 +7,10 @@ def TestTDSCF():
     """
     Tests Basic Propagation Functionality.
     """
-    geom = """     H        0.00000         0.00000         0.75000
-                   H        0.00000         0.00000         0.00000""".split("\n")
+    geom = """H 0. 0. 0.
+H 0. 0. 0.9
+H 2.0 0.  0
+H 2.0 0.9 0""".split("\n")
     pyscfatomstring=""
     for line in geom:
         s = line.split()

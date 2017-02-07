@@ -64,7 +64,7 @@ class tdscf:
         self.initialcondition()
         self.field = fields(the_scf_, self.params)
         self.field.InitializeExpectation(self.rho, self.C)
-        self.CField()
+        #self.CField()
         self.prop()
         return
 
@@ -125,9 +125,8 @@ class tdscf:
         """
         Pt = 2.0*TransMat(P,self.X,-1)
         J,K = self.get_jk(Pt)
-        #dft.rks.get_veff(self.the_scf, None, 2.0*P)
-        self.F = TransMat(self.H + 0.5*(J+J.T.conj()) - 0.5*(0.5*(K + K.T.conj())),self.X)
-        return  self.F
+        return  TransMat(self.H + 0.5*(J+J.T.conj()) - 0.5*(0.5*(K + K.T.conj())),self.X)
+
     def FockDFTbuild(self,P):
         '''
         Updates self.F given current self.rho (both complex.)
@@ -156,9 +155,7 @@ class tdscf:
         nn, Exc, Vxc = self.the_scf._numint.nr_rks(self.mol, self.the_scf.grids, self.the_scf.xc, P.real, 0)
         Vxc = Vxc.astype(complex)
         Vxc += -0.5 * self.hyb * K
-
         return Vxc
-
 
     def get_jk(self, P):
         '''
@@ -168,9 +165,7 @@ class tdscf:
             J: Coulomb matrix
             K: Exchange matrix
         '''
-        J = self.get_j(P)
-        K = self.get_k(P)
-        return J, K
+        return self.get_j(P), self.get_k(P)
 
     def get_j(self,P):
         '''
@@ -238,8 +233,6 @@ class tdscf:
         fileon = os.path.isfile('TDSCF.prm')
         if(fileon):
             prm = open('TDSCF.prm','r')
-
-
         self.params["Model"] = "TDDFT" #"TDHF"; the difference of Fock matrix and energy
         self.params["Method"] = "MMUT"#"MMUT"
 
@@ -268,7 +261,6 @@ class tdscf:
                         self.params[s[0]] = s[1]
                     else:
                         self.params[s[0]] = float(s[1])
-
 
         print "============================="
         print "         Parameters"
@@ -316,22 +308,18 @@ class tdscf:
         ctypes.c_int(self.n_ao),ctypes.c_int(self.n_aux),ctypes.c_int(self.n_occ),\
         ctypes.c_double(self.Enuc), ctypes.c_double(self.params["dt"]))
 
-        #print "F\n",F
     def Field(self):
         mux = 2*self.field.dip_ints[0].astype(complex)
         muy = 2*self.field.dip_ints[1].astype(complex)
         muz = 2*self.field.dip_ints[2].astype(complex)
         nuc = self.field.nuc_dip
-
         self.muxo = muxo.copy()
         self.muyo = muyo.copy()
         self.muzo = muzo.copy()
         self.mu0 = mu0.copy()
-
         return
 
     def CField(self):
-
         '''
         setup field components in C
         '''
@@ -339,7 +327,6 @@ class tdscf:
         muy = 2*self.field.dip_ints[1].astype(complex)
         muz = 2*self.field.dip_ints[2].astype(complex)
         nuc = self.field.nuc_dip
-
         libtdscf.FieldOn(\
         self.rho.ctypes.data_as(ctypes.c_void_p),\
         nuc.ctypes.data_as(ctypes.c_void_p),\
@@ -351,26 +338,21 @@ class tdscf:
         ctypes.c_double(self.params["Tau"]), ctypes.c_double(self.params["tOn"]),\
         ctypes.c_int(self.params["ApplyImpulse"]), ctypes.c_int(self.params["ApplyCw"])
         )
-
         # Bring the field Components
         n = self.n_ao
         muxo = np.zeros((n,n)).astype(complex)
         muyo = np.zeros((n,n)).astype(complex)
         muzo = np.zeros((n,n)).astype(complex)
         mu0 = np.zeros(3)
-
         libtdscf.InitMu(\
         muxo.ctypes.data_as(ctypes.c_void_p),\
         muyo.ctypes.data_as(ctypes.c_void_p),\
         muzo.ctypes.data_as(ctypes.c_void_p),\
         mu0.ctypes.data_as(ctypes.c_void_p))
-
         self.muxo = muxo.copy()
         self.muyo = muyo.copy()
         self.muzo = muzo.copy()
         self.mu0 = mu0.copy()
-
-
         return
 
     def InitFockBuild(self):
@@ -400,14 +382,12 @@ class tdscf:
             Pmo = 0.5*np.diag(self.the_scf.mo_occ).astype(complex)
             Plao = TransMat(Pmo,self.V,-1)
             print "Ne", np.trace(Plao), np.trace(Pmo)
-
             Eold = E
             if self.params["Model"] == "TDHF":
-                self.FockBuildc(Plao)
+                self.F = self.FockBuildc(Plao)
             elif self.params["Model"] == "TDDFT":
                 self.FockDFTbuild(Plao)
             E = self.energy(Plao)
-
             err = abs(E-Eold)
             if (it%1 ==0):
                 print "Iteration:", it,"; Energy:",E,"; Error =",err
@@ -438,12 +418,9 @@ class tdscf:
         XT = self.X.T.copy()
         HT = self.H.T.copy()
         FT = np.zeros((n,n)).astype(complex)
-
-
         libtdscf.setupFock(RhoT.ctypes.data_as(ctypes.c_void_p),V_.ctypes.data_as(ctypes.c_void_p),VT.ctypes.data_as(ctypes.c_void_p))
         V_T = V_.T.copy()
         #cx_mat& Rho, cx_mat& V_, cx_mat& V, cx_mat& C, mat& X, mat& H, cube& BpqR, vec& eigs, int n2, int n_aux
-
         return F
 
     def Split_RK4_Step_MMUT(self, w, v , oldrho , time, dt ,IsOn):
@@ -495,22 +472,24 @@ class tdscf:
     def TDDFTstep(self,time):
         #self.rho (MO basis)
         if (self.params["Method"] == "MMUT"):
-            #print "rho(MO)\n", self.rho
-            #print "F(LAO)\n",self.F # LAO
-            self.FockBuildc(TransMat(self.rho,self.V,-1))
+            self.F = self.FockBuildc(TransMat(self.rho,self.V,-1)) # is LAO basis
+            self.F = np.conj(self.F)
             Fmo_prev = TransMat(self.F, self.V)
-            #print "Fmo, should not change over time\n",Fmo_prev #MO
             self.eigs, rot = np.linalg.eig(Fmo_prev)
-            # Rot (MO,MO) eye
+            # print Fmo_prev, rot
             # Rotate all the densities into the current fock eigenbasis.
-            self.rho = TransMat(self.rho,rot)
-            self.rhoM12 = TransMat(self.rhoM12,rot)
-            #print "Rho(MO)\n", self.rho
+            #roti = np.linalg.inv(rot)
+            self.rho = TransMat(self.rho, rot)
+            self.rhoM12 = TransMat(self.rhoM12, rot)
             self.V = np.dot(self.V , rot)
-            self.C = np.dot(self.C , rot)
+            self.C = np.dot(self.X , self.V)
 
             # propagation is done in the current eigenbasis.
             Fmo = np.diag(self.eigs).astype(complex)
+            #Fmo = TransMat(self.F,self.V)
+            # Check that the energy is still correct.
+            Hmo = TransMat(self.H,self.C)
+            print (self.Enuc+np.trace(np.dot(self.rho,Hmo+Fmo))).real
             FmoPlusField, IsOn = self.field.ApplyField(Fmo,self.C,time)
             #print "Fmo + FIeld\n",FmoPlusField
             w,v = scipy.linalg.eig(FmoPlusField)
@@ -518,9 +497,7 @@ class tdscf:
             NewRho = self.Split_RK4_Step_MMUT(w, v, NewRhoM12, time,self.params["dt"]/2.0, IsOn)
             self.rho = 0.5*(NewRho+(NewRho.T.conj()));
             self.rhoM12 = 0.5*(NewRhoM12+(NewRhoM12.T.conj()))
-            #print "Rho(MO)\n",self.rho
-            #print "RHO(LAO)\n",TransMat(self.rho,self.V,-1)
-            #print "\n\n"
+
         elif (self.params["Method"] == "RK4"):
             raise Exception("Broken.")
             dt = self.params["dt"]
@@ -578,11 +555,7 @@ class tdscf:
             libtdscf.TDTDAstep(newrho.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(time))
             self.rho = newrho.copy()
             #print self.rho
-
         #quit()
-
-
-
         return
 
     def step(self,time):
