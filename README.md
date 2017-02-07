@@ -6,7 +6,8 @@ a TDSCF extension of PYSCF incorporating TCL code etc....
 ## Requirements 
 - Armadillo (download the lib and use CMake to install)
 
-```	cd /PATHTOARMA/
+```	
+	cd /PATHTOARMA/
 	mkdir build 
 	cd build 
 	cmake .. 
