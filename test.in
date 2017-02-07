@@ -1,0 +1,16 @@
+$molecule 
+0 1 
+H 0. 0. 0.
+H 0. 0. 0.9
+H 2.0 0.  0
+H 2.0 0.9 0
+$end
+
+$rem
+basis STO-3G
+exchange HF
+cis_n_roots 3
+unrestricted false
+symmetry false 
+sym_ignore true 
+$end
