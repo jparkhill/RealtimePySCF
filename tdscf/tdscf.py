@@ -19,7 +19,7 @@ class tdscf:
 
     By default it does
     """
-    def __init__(self,the_scf_):
+    def __init__(self,the_scf_,prm=None):
         """
         Args:
             the_scf an SCF object from pyscf (should probably take advantage of complex RKS already in PYSCF)
@@ -61,7 +61,7 @@ class tdscf:
         self.mol = the_scf_.mol
         self.auxmol_set()
         self.params = dict()
-        self.initialcondition()
+        self.initialcondition(prm)
         self.field = fields(the_scf_, self.params)
         self.field.InitializeExpectation(self.rho, self.C)
         #self.CField()
@@ -205,7 +205,7 @@ class tdscf:
         #ikmat = np.einsum('pik,kjp->ij', pik.reshape(naux,nao,nao), self.eri3c)
         return rkmat #+ ikmat
 
-    def initialcondition(self):
+    def initialcondition(self,prm):
         print '''
         ===================================
         |  Realtime TDSCF module          |
@@ -221,18 +221,17 @@ class tdscf:
         n_mo = self.n_mo = n_ao # should be fixed.
         n_occ = self.n_occ = int(sum(self.the_scf.mo_occ)/2)
         print "n_ao:", n_ao, "n_mo:", n_mo, "n_occ:", n_occ
-        self.ReadParams()
+        self.ReadParams(prm)
         self.InitializeLiouvillian()
         return
 
-    def ReadParams(self):
+    def ReadParams(self,prm):
         '''
         Read the file and fill the params dictionary
         '''
-        import os.path
-        fileon = os.path.isfile('TDSCF.prm')
-        if(fileon):
-            prm = open('TDSCF.prm','r')
+
+
+
         self.params["Model"] = "TDDFT" #"TDHF"; the difference of Fock matrix and energy
         self.params["Method"] = "MMUT"#"MMUT"
 
@@ -251,8 +250,8 @@ class tdscf:
 
         self.params["StatusEvery"] = 5000
         # Here they should be read from disk.
-        if(fileon):
-            for line in prm:
+        if(prm != None):
+            for line in prm.splitlines():
                 s = line.split()
                 if len(s) > 1:
                     if s[0] == "MaxIter" or s[0] == str("ApplyImpulse") or s[0] == str("ApplyCw") or s[0] == str("StatusEvery"):
@@ -279,6 +278,7 @@ class tdscf:
         print "ApplyImpulse:", self.params["ApplyImpulse"]
         print "ApplyCw:", self.params["ApplyCw"]
         print "=============================\n\n"
+
         return
 
     def InitializeLiouvillian(self):
@@ -381,7 +381,7 @@ class tdscf:
             # Fill up the density in the MO basis and then Transform back
             Pmo = 0.5*np.diag(self.the_scf.mo_occ).astype(complex)
             Plao = TransMat(Pmo,self.V,-1)
-            print "Ne", np.trace(Plao), np.trace(Pmo)
+            #print "Ne", np.trace(Plao), np.trace(Pmo)
             Eold = E
             if self.params["Model"] == "TDHF":
                 self.F = self.FockBuildc(Plao)
@@ -389,7 +389,7 @@ class tdscf:
                 self.FockDFTbuild(Plao)
             E = self.energy(Plao)
             err = abs(E-Eold)
-            if (it%1 ==0):
+            if (it%10 ==0):
                 print "Iteration:", it,"; Energy:",E,"; Error =",err
             it += 1
         Pmo = 0.5*np.diag(self.the_scf.mo_occ).astype(complex)

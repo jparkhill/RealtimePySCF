@@ -27,7 +27,7 @@ class fields:
         Performs the required PYSCF calls to generate the AO basis dipole matrices.
         """
         self.dip_ints = the_scf.mol.intor('cint1e_r_sph', comp=3) # component,ao,ao.
-        print "A dipole matrices\n",self.dip_ints
+        #print "A dipole matrices\n",self.dip_ints
         charges = the_scf.mol.atom_charges()
         coords  = the_scf.mol.atom_coords()
         self.nuc_dip = np.einsum('i,ix->x', charges, coords)

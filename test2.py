@@ -7,10 +7,10 @@ np.set_printoptions(linewidth=220, suppress = True,precision = 7)
 
 def TestTDSCF():
     """
-    Tests Basic Propagation Functionality. TDDFT
+    Tests Basic Propagation Functionality. TDHF
     """
     prm = '''
-    Model	TDDFT
+    Model	TDHF
     Method	MMUT
 
     dt	0.02
@@ -38,7 +38,6 @@ def TestTDSCF():
     mol.basis = 'sto-3g'
     mol.build()
     the_scf = pyscf.dft.RKS(mol)
-    the_scf.xc='PBE'
     print "Inital SCF finished. E=", the_scf.kernel()
     aprop = tdscf(the_scf,prm)
     return
