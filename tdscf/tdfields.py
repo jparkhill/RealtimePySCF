@@ -85,9 +85,6 @@ class fields:
         amp, IsOn = self.ImpulseAmp(time)
         mpol = self.pol * amp
         if (IsOn):
-            print "Field on"
-            #print "perturbations\n", mu
-            #print "perturbations(MO directly)\n", np.einsum("kij,k->ij",self.dip_mo,mpol)
             return a_mat + 2.0*TransMat(np.einsum("kij,k->ij",self.dip_ints,mpol),c_mat), True
         else :
             return a_mat, False

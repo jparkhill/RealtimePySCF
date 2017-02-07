@@ -483,13 +483,11 @@ class tdscf:
             self.rhoM12 = TransMat(self.rhoM12, rot)
             self.V = np.dot(self.V , rot)
             self.C = np.dot(self.X , self.V)
-
             # propagation is done in the current eigenbasis.
             Fmo = np.diag(self.eigs).astype(complex)
             #Fmo = TransMat(self.F,self.V)
             # Check that the energy is still correct.
             Hmo = TransMat(self.H,self.C)
-            print (self.Enuc+np.trace(np.dot(self.rho,Hmo+Fmo))).real
             FmoPlusField, IsOn = self.field.ApplyField(Fmo,self.C,time)
             #print "Fmo + FIeld\n",FmoPlusField
             w,v = scipy.linalg.eig(FmoPlusField)

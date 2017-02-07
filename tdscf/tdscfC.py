@@ -8,7 +8,7 @@ from cmath import *
 from pyscf import lib
 import ctypes
 
-#libtdscf = lib.load_library('libtdscf')
+libtdscf = lib.load_library('libtdscf')
 
 class tdscfC:
     """
@@ -17,7 +17,7 @@ class tdscfC:
 
     By default it does
     """
-    def __init__(self,the_scf_):
+    def __init__(self,prm,the_scf_):
         """
         Args:
             the_scf an SCF object from pyscf (should probably take advantage of complex RKS already in PYSCF)
@@ -40,6 +40,9 @@ class tdscfC:
         self.n_mo = None
         self.n_occ = None
         self.n_e = None
+	self.c0 = None # for ee2
+	self.c0dot = None # for ee2
+	self.j = None
 
         #Global Matrices
         self.rho = None # Current MO basis density matrix. (the idempotent (0,1) kind)
@@ -52,6 +55,8 @@ class tdscfC:
         self.V = None # LAO x current MO
         self.H = None # (ao X ao)  core hamiltonian.
         self.B = None # for ee2
+	self.cia = None # for ee2
+	self.ciadot = None # for ee2
         self.log = []
 
         # Objects
@@ -59,7 +64,7 @@ class tdscfC:
         self.mol = the_scf_.mol
         self.auxmol_set()
         self.params = dict()
-        self.initialcondition()
+        self.initialcondition(prm)
         self.field = fields(the_scf_, self.params)
         self.field.InitializeExpectation(self.rho,self.C)
         self.CField()
@@ -111,7 +116,7 @@ class tdscfC:
 
         return
 
-    def initialcondition(self):
+    def initialcondition(self,prm):
         print '''
         ===================================
         |  Realtime TDSCF module          |
@@ -127,67 +132,49 @@ class tdscfC:
         n_mo = self.n_mo = n_ao # should be fixed.
         n_occ = self.n_occ = int(sum(self.the_scf.mo_occ)/2)
         print "n_ao:", n_ao, "n_mo:", n_mo, "n_occ:", n_occ
-        self.ReadParams()
+        self.ReadParams(prm)
         self.InitializeLiouvillian()
         return
 
-    def ReadParams(self):
+    def GetValues(self,params,key,default,typ):
+    	# Try to get value from the dictionary
+    	str_val = "None"
+    	if key in params:
+        	if params[key]!=None:
+         		str_val = params[key]
+			print key, ": ", str_val
+    	# If nothing found - use default value
+    	if str_val!="None":
+       		pass
+   	else:
+       		str_val = default
+       		print key, ": ", str_val, "(default)"
+    	# Convert string to desired data type
+  	if typ=="s":
+      		return str_val
+   	elif typ=="f":
+       		return float(str_val)
+   	elif typ=="i":
+       		return int(float(str_val))
+
+    def ReadParams(self,prm):
         '''
         Read the file and fill the params dictionary
         '''
-        import os.path
-        fileon = os.path.isfile('TDSCF.prm')
-        if(fileon):
-            prm = open('TDSCF.prm','r')
-
-
-        self.params["Model"] = "TDDFT"
-        self.params["Method"] = "RK4"#"MMUT"
-
-        self.params["dt"] =  0.02
-        self.params["MaxIter"] = 15000
-
-        self.params["ExDir"] = 1.0
-        self.params["EyDir"] = 1.0
-        self.params["EzDir"] = 1.0
-        self.params["FieldAmplitude"] = 0.01
-        self.params["FieldFreq"] = 0.9202
-        self.params["Tau"] = 0.07
+        self.params["dt"] = self.GetValues(prm,"dt","0.02","f")
+        self.params["MaxIter"] = self.GetValues(prm,"MaxIter","1000","i")
+        self.params["Model"] = self.GetValues(prm,"Model","TDDFT","s")
+        self.params["Method"] = self.GetValues(prm,"Method","MMUT","s")
+        self.params["ExDir"] = self.GetValues(prm,"ExDir","1.0","f")
+        self.params["EyDir"] = self.GetValues(prm,"EyDir","1.0","f")
+        self.params["EzDir"] = self.GetValues(prm,"EzDir","1.0","f")
+        self.params["FieldAmplitude"] = self.GetValues(prm,"FieldAmplitude","0.001","f")
+        self.params["FieldFreq"] = self.GetValues(prm,"FieldFreq","1.1","f")
+        self.params["Tau"] = self.GetValues(prm,"Tau","0.07","f")
         self.params["tOn"] = 7.0*self.params["Tau"]
-        self.params["ApplyImpulse"] = 1
-        self.params["ApplyCw"] = 0
-
-        self.params["StatusEvery"] = 5000
+        self.params["StatusEvery"] = self.GetValues(prm,"StatusEvery","100","i")
         # Here they should be read from disk.
-        if(fileon):
-            for line in prm:
-                s = line.split()
-                if len(s) > 1:
-                    if s[0] == "MaxIter" or s[0] == str("ApplyImpulse") or s[0] == str("ApplyCw") or s[0] == str("StatusEvery"):
-                        self.params[s[0]] = int(s[1])
-                    elif s[0] == "Model" or s[0] == "Method":
-                        self.params[s[0]] = s[1]
-                    else:
-                        self.params[s[0]] = float(s[1])
-
-
-        print "============================="
-        print "         Parameters"
-        print "============================="
-        print "Model:", self.params["Model"]
-        print "Method:", self.params["Method"]
-        print "dt:", self.params["dt"]
-        print "MaxIter:", self.params["MaxIter"]
-        print "ExDir:", self.params["ExDir"]
-        print "EyDir:", self.params["EyDir"]
-        print "EzDir:", self.params["EzDir"]
-        print "FieldAmplitude:", self.params["FieldAmplitude"]
-        print "FieldFreq:", self.params["FieldFreq"]
-        print "Tau:", self.params["Tau"]
-        print "tOn:", self.params["tOn"]
-        print "ApplyImpulse:", self.params["ApplyImpulse"]
-        print "ApplyCw:", self.params["ApplyCw"]
-        print "=============================\n\n"
+        #print self.params
         return
 
     def InitializeLiouvillian(self):
@@ -198,7 +185,12 @@ class tdscfC:
         self.X = MatrixPower(S,-1./2.)
         self.H = self.the_scf.get_hcore()
         self.C = self.X.copy() # Initial set of orthogonal coordinates.
-        self.InitFockBuildC()
+	if(self.params["Model"] == "TDDFT"):
+	    self.InitFockBuildC()
+	elif(self.params["Model"] == "TDCI") and (self.params["Method"] == "CIS"):
+            self.InitFockBuildC2()
+        elif(self.params["Model"] == "TDCI") and (self.params["Method"] == "CISD"):
+            raise Exception("Unknown Method...")
         self.rho = 0.5*np.diag(self.the_scf.mo_occ).astype(complex)
         self.rhoM12 = self.rho.copy()
         self.get_HJK()
@@ -243,7 +235,24 @@ class tdscfC:
         self.V = V.copy()
         self.C = C.copy()
 
+    def InitFockBuildC2(self):
+        '''
+        Transfer H,S,X,B to CPP
+        Initialize V matrix and eigs vec in CPP as well
+        Make Fockbuild
+        '''
+        F = np.zeros((self.n_ao,self.n_ao)).astype(complex)
+        libtdscf.Initialize2(\
+        self.H.ctypes.data_as(ctypes.c_void_p),self.S.ctypes.data_as(ctypes.c_void_p),\
+        self.X.ctypes.data_as(ctypes.c_void_p),self.B.ctypes.data_as(ctypes.c_void_p),F.ctypes.data_as(ctypes.c_void_p),\
+        ctypes.c_int(self.n_ao),ctypes.c_int(self.n_aux),ctypes.c_int(self.n_occ),\
+        ctypes.c_double(self.Enuc), ctypes.c_double(self.params["dt"]))
 
+        V = np.zeros((self.n_ao, self.n_ao)).astype(complex)
+        C = np.zeros((self.n_ao, self.n_ao)).astype(complex)
+        libtdscf.Call(V.ctypes.data_as(ctypes.c_void_p), C.ctypes.data_as(ctypes.c_void_p))
+        self.V = V.copy()
+        self.C = C.copy()
 
 
     def CField(self):
@@ -310,7 +319,10 @@ class tdscfC:
 
     def CIstep(self,time):
         if(self.params["Method"] == "CIS"):
-            libtdscf.CIS_step()
+	    newrho = self.rho.copy()
+            libtdscf.CIS_step(cia.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(c0) , ciadot.ctypes.data_as(ctypes.c_void_p), \
+	    ctypes.c_double(c0dot), ctypes.c_double(time))
+	    self.rho = newrho.copy()
         else:
             raise Exception("Unknown Method...")
 
@@ -325,7 +337,7 @@ class tdscfC:
         elif (self.params["Model"] == "TDCI"):
             self.CIstep(time)
         else:
-            raise Exception("Unknown Method...")
+            raise Exception("Unknown Model...")
         return
 
 

@@ -1,6 +1,8 @@
-from tdscf import *
+import numpy as np
+from tdscf import tdscf
 import pyscf
 import pyscf.dft
+from  pyscf import gto 
 np.set_printoptions(linewidth=220, suppress = True,precision = 7)
 
 def TestTDSCF():
