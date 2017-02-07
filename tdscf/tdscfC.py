@@ -8,7 +8,7 @@ from cmath import *
 from pyscf import lib
 import ctypes
 
-libtdscf = lib.load_library('libtdscf')
+#libtdscf = lib.load_library('../lib/tdscf/libtdscf.dylib')
 
 class tdscfC:
     """
@@ -17,7 +17,7 @@ class tdscfC:
 
     By default it does
     """
-    def __init__(self,prm,the_scf_):
+    def __init__(self,the_scf_,prm=dict()):
         """
         Args:
             the_scf an SCF object from pyscf (should probably take advantage of complex RKS already in PYSCF)
