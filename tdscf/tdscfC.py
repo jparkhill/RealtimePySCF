@@ -1,5 +1,5 @@
 import numpy as np
-import scipy
+import scipy, os
 import scipy.linalg
 from func import *
 from pyscf import gto, dft, scf, ao2mo
@@ -8,7 +8,27 @@ from cmath import *
 from pyscf import lib
 import ctypes
 
-#libtdscf = lib.load_library('../lib/tdscf/libtdscf.dylib')
+print os.getcwd()
+LIBRARYPATH = os.getcwd()+"/lib/tdscf"
+
+def load_library(libname):
+    if '1.6' in np.__version__:
+        if (sys.platform.startswith('linux') or
+            sys.platform.startswith('gnukfreebsd')):
+            so_ext = '.so'
+        elif sys.platform.startswith('darwin'):
+            so_ext = '.dylib'
+        elif sys.platform.startswith('win'):
+            so_ext = '.dll'
+        else:
+            raise OSError('Unknown platform')
+        libname_so = libname + so_ext
+        return ctypes.CDLL(os.path.join(os.path.dirname(__file__), libname_so))
+    else:
+        _loaderpath = os.path.dirname(LIBRARYPATH)
+        return np.ctypeslib.load_library(libname, _loaderpath)
+
+libtdscf = load_library('../lib/tdscf/libtdscf')
 
 class tdscfC:
     """
