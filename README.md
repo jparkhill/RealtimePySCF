@@ -1,13 +1,15 @@
 # tdscf_pyscf
 a TDSCF extension of PYSCF incorporating TCL code etc.... 
 
+![Alt text](/misc/spectrum.jpg?raw=true "Realtime Spectra with PySCF")
+
 ## Requirements 
 - Armadillo (download the lib and use CMake to install)
-	cd /PATHTOARMA/
- 	mkdir build 
-	cd build 
-	cmake .. 
-	make install 
+-	cd /PATHTOARMA/
+- 	mkdir build 
+-	cd build 
+-	cmake .. 
+-	make install 
 
 ## To use. 
 - As of now have installed pyscf and python test.py  
