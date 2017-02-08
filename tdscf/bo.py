@@ -463,7 +463,7 @@ class BORKS():
         Vlow = self.get_vxc(Pt) # Include the Hybrid with K matrix
         Veff = J + Vlow # Whole J - 0.5K
         nA = self.nA
-        n = self.n
+        n = self.n 
         # pass down AA block of BO density matrix
         VAAhigh = np.zeros((n,n)).astype(complex)
         VAAlow = np.zeros((n,n)).astype(complex)
