@@ -1,5 +1,6 @@
 import numpy as np
 from tdscf import tdscf
+import sys, re 
 import pyscf
 import pyscf.dft
 from  pyscf import gto
@@ -33,7 +34,7 @@ def TestTDSCF():
     H 2.0 0.  0
     H 2.0 0.9 0
     """
-    output = str(sys.argv[0]).rstrip["py"]+".dat"
+    output = re.sub("py","dat",sys.argv[0]) 
     mol = gto.Mole()
     mol.atom = geom
     mol.basis = 'sto-3g'
