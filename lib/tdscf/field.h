@@ -18,14 +18,13 @@
 
   void updatefield(cx_mat& C)
   {
+		cout << "mux.n_cols, n_rows" << mux.n_cols << " " << mux.n_rows << endl;
     muxo=C.t()*mux*C;
 		muyo=C.t()*muy*C;
 		muzo=C.t()*muz*C;
 		muxo = 0.5*(muxo+muxo.t());
 		muyo = 0.5*(muyo+muyo.t());
 		muzo = 0.5*(muzo+muzo.t());
-
-
 
   }
 }
@@ -44,7 +43,7 @@
   void InitializeExpectation(const arma::cx_mat& pin)
 	{
 		mu_0=Expectation(pin,false);
-    (mu_0-mu_n).t().print("Initial Dipole (x, y, z):");
+    mu_0.print("Initial Dipole (x, y, z):");
 	}
 
   double ImpulseAmp(double tnow)

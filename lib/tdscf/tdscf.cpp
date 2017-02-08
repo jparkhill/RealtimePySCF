@@ -1,4 +1,5 @@
 #include <iostream>
+#include <iomanip>
 #include <armadillo>
 using namespace arma;
 #include "tdscf.h"
@@ -60,12 +61,8 @@ void Initialize(double *h, double *s, double *x, double *b, std::complex<double>
 
 }
 
-void Initialize2(double *h, double *s, double *x, double *b, std::complex<double> *f, int n_, int n_aux_,int nocc_, double Enuc, double dt_)
+void Initialize2(double *h, double *s, double *x, double *b, std::complex<double> *f, int n_, int n_aux_,int nocc_,  double Enuc, double dt_)
 {
-  // save the variables that does not change over the dynamics
-  // make n and naux public
-  // H(AO), B(LAO), V is initialized as eye.
-  // make empty eigs vector
   n_mo = n = n_;
   n2 = n*n;
   n3 = n2*n;
@@ -111,10 +108,10 @@ void Initialize2(double *h, double *s, double *x, double *b, std::complex<double
   FockBuild(Rho_,V_);
   UpdateVi(V_);
 	CIS();
-	HCIS();
+	//HCIS();
 	cia.resize(no,nv);
 	c0 = 1.0;
-  InitializeExpectation(MakeRho(Rho_,cia,c0));
+
   InitFock(Rho_,V_);
 
   memcpy(f,F.memptr(),2*sizeof(double)*n*n);
@@ -129,7 +126,7 @@ void InitFock(cx_mat& Rho,cx_mat& V_)
   double err=100.0;
   int maxit = 400; int it=1;
   rho0 = V*Rho*(V.t());
-  //rho0.print("Inintial Rho");
+  rho0.print("Initial Rho");
 
   while (std::abs(err) > pow(10.0,-10) && it<maxit)
   {
@@ -216,7 +213,6 @@ std::transform(omp_in.begin( ),  omp_in.end( ),  omp_out.begin( ), omp_out.begin
   //eigs.print("eigs");
   V_ = V = V*Vprime;
   C = X*V;
-
   // UPDATE USING MEMCPY
   // F, V_, V, C, eigs are updated
 
@@ -585,7 +581,7 @@ std::transform(omp_in.begin( ),  omp_in.end( ),  omp_out.begin( ), omp_out.begin
         }
       }
     }
-    cout <<  "Mp2 Correlation energy: " << Emp2 << endl;
+    cout << std::setprecision(9) <<  "Mp2 Correlation energy: " << Emp2 << endl;
 
     VCur = V_;
 }
@@ -883,32 +879,31 @@ cx_mat MakeRho(cx_mat Rho_, cx_mat cia, cx_double c0) // Should take C0 and Cia 
 		Rho_ *= conj(c0)*c0;
 
 		Rho_.submat(0,no,no-1,n-1) += 1/sqrt(2)*conj(c0)*cia;
-		Rho_.submat(no,0,n-1,no-1) += 1/sqrt(2)*conj(cia)*c0;
+		Rho_.submat(no,0,n-1,no-1) += 1/sqrt(2)*conj(cia).t()*c0; //this is different from Kevin's TDCI.
 
 		cx_mat eRho(Rho_); eRho.zeros();
 		cx_mat hRho(Rho_); hRho.zeros();
 
-
 		for (int a = 0; a < nv; a++)
-				for(int i = 0; i< no; i++)
-						Rho_ += conj(cia(i,a))*cia(i,a)*RhoHF;
+		 		for(int i = 0; i< no; i++)
+		 				Rho_ += conj(cia(i,a))*cia(i,a)*RhoHF;
 
-		for (int a = 0; a < nv; a++)
-				for(int i = 0; i< no; i++)
-						for(int ap = 0; ap < nv; ap++)
-						{
-								Rho_(ap+no,a+no) += 0.5*conj(cia(i,ap))*cia(i,a);
-//                    eRho(a+no,ap+no) -= conj(cia(i,a))*cia(i,ap);
-						}
+ 		for (int a = 0; a < nv; a++)
+ 				for(int i = 0; i< no; i++)
+ 						for(int ap = 0; ap < nv; ap++)
+ 						{
+ 								Rho_(ap+no,a+no) += 0.5*conj(cia(i,ap))*cia(i,a);
+ //                    eRho(a+no,ap+no) -= conj(cia(i,a))*cia(i,ap);
+ 						}
 
 
-		for (int a = 0; a < nv; a++)
-				for(int i = 0; i< no; i++)
-								for(int ip = 0; ip < no; ip++)
-								{
-										Rho_(i,ip) -= 0.5*cia(i,a)*conj(cia(ip,a));
-//                        hRho(i,ip) -= cia(i,a)*conj(cia(ip,a));
-								}
+ 		for (int a = 0; a < nv; a++)
+ 				for(int i = 0; i< no; i++)
+ 								for(int ip = 0; ip < no; ip++)
+ 								{
+ 										Rho_(i,ip) -= 0.5*cia(i,a)*conj(cia(ip,a));
+ //                        hRho(i,ip) -= cia(i,a)*conj(cia(ip,a));
+ 								}
 
 //        cout << "Trace Rho: " << trace(Rho) << endl;
 //        cout << "Trace eRho: " << trace(eRho) << endl;
