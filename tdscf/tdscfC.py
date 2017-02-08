@@ -37,7 +37,7 @@ class tdscfC:
 
     By default it does
     """
-    def __init__(self,the_scf_,prm=dict()):
+    def __init__(self,the_scf_,prm=None,output = 'log.dat'):
         """
         Args:
             the_scf an SCF object from pyscf (should probably take advantage of complex RKS already in PYSCF)
@@ -84,11 +84,11 @@ class tdscfC:
         self.mol = the_scf_.mol
         self.auxmol_set()
         self.params = dict()
-        self.initialcondition()
+        self.initialcondition(prm)
         self.field = fields(the_scf_, self.params)
         self.field.InitializeExpectation(self.rho,self.C)
         self.CField()
-        self.prop()
+        self.prop(output)
         return
 
     def auxmol_set(self,auxbas = "weigend"):
@@ -136,7 +136,7 @@ class tdscfC:
 
         return
 
-    def initialcondition(self):
+    def initialcondition(self,prm):
         print '''
         ===================================
         |  Realtime TDSCF module          |
@@ -152,18 +152,17 @@ class tdscfC:
         n_mo = self.n_mo = n_ao # should be fixed.
         n_occ = self.n_occ = int(sum(self.the_scf.mo_occ)/2)
         print "n_ao:", n_ao, "n_mo:", n_mo, "n_occ:", n_occ
-        self.ReadParams()
+        self.ReadParams(prm)
         self.InitializeLiouvillian()
         return
 
-    def ReadParams(self):
+    def ReadParams(self,prm):
         '''
         Read the file and fill the params dictionary
         '''
-        import os.path
-        fileon = os.path.isfile('TDSCF.prm')
-        if(fileon):
-            prm = open('TDSCF.prm','r')
+
+
+
         self.params["Model"] = "TDDFT" #"TDHF"; the difference of Fock matrix and energy
         self.params["Method"] = "MMUT"#"MMUT"
 
@@ -182,8 +181,8 @@ class tdscfC:
 
         self.params["StatusEvery"] = 5000
         # Here they should be read from disk.
-        if(fileon):
-            for line in prm:
+        if(prm != None):
+            for line in prm.splitlines():
                 s = line.split()
                 if len(s) > 1:
                     if s[0] == "MaxIter" or s[0] == str("ApplyImpulse") or s[0] == str("ApplyCw") or s[0] == str("StatusEvery"):
@@ -210,6 +209,7 @@ class tdscfC:
         print "ApplyImpulse:", self.params["ApplyImpulse"]
         print "ApplyCw:", self.params["ApplyCw"]
         print "=============================\n\n"
+
         return
 
     def InitializeLiouvillian(self):
@@ -413,14 +413,14 @@ class tdscfC:
             print "\n"
         return tore
 
-    def prop(self):
+    def prop(self,output):
         """
         The main tdscf propagation loop.
         """
 
         iter = 0
         self.t = 0
-        f = open('log.dat','a')
+        f = open(output,'a')
         print "\n\nPropagation Begins"
         while (iter<self.params["MaxIter"]):
             self.step(self.t)
