@@ -19,7 +19,7 @@ class tdscf:
 
     By default it does
     """
-    def __init__(self,the_scf_,prm=None):
+    def __init__(self,the_scf_,prm=None,output = 'log.dat'):
         """
         Args:
             the_scf an SCF object from pyscf (should probably take advantage of complex RKS already in PYSCF)
@@ -65,7 +65,7 @@ class tdscf:
         self.field = fields(the_scf_, self.params)
         self.field.InitializeExpectation(self.rho, self.C)
         #self.CField()
-        self.prop()
+        self.prop(output)
         return
 
     def auxmol_set(self,auxbas = "weigend"):
@@ -610,13 +610,13 @@ class tdscf:
             print('Dipole moment(X, Y, Z, au): %8.5f, %8.5f, %8.5f' %(self.dipole().real[0],self.dipole().real[1],self.dipole().real[2]))
         return tore
 
-    def prop(self):
+    def prop(self,output):
         """
         The main tdscf propagation loop.
         """
         iter = 0
         self.t = 0
-        f = open('log.dat','a')
+        f = open(output,'a')
         print "Energy Gap (eV)",abs(self.eigs[self.n_occ]-self.eigs[self.n_occ-1])*27.2114
         print "\n\nPropagation Begins"
         while (iter<self.params["MaxIter"]):

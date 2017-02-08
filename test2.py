@@ -33,13 +33,14 @@ def TestTDSCF():
     H 2.0 0.  0
     H 2.0 0.9 0
     """
+    output = str(sys.argv[0]).rstrip["py"]+".dat"
     mol = gto.Mole()
     mol.atom = geom
     mol.basis = 'sto-3g'
     mol.build()
     the_scf = pyscf.dft.RKS(mol)
     print "Inital SCF finished. E=", the_scf.kernel()
-    aprop = tdscf(the_scf,prm)
+    aprop = tdscf(the_scf,prm,output)
     return
 
 TestTDSCF()

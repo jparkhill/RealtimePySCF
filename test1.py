@@ -1,5 +1,6 @@
 import numpy as np
 from tdscf import tdscf
+import sys
 import pyscf
 import pyscf.dft
 from  pyscf import gto
@@ -33,6 +34,9 @@ def TestTDSCF():
     H 2.0 0.  0
     H 2.0 0.9 0
     """
+    print sys.argv[0]
+
+    output = str(sys.argv[0]).rstrip["py"]+".dat"
     mol = gto.Mole()
     mol.atom = geom
     mol.basis = 'sto-3g'
@@ -40,7 +44,7 @@ def TestTDSCF():
     the_scf = pyscf.dft.RKS(mol)
     the_scf.xc='PBE'
     print "Inital SCF finished. E=", the_scf.kernel()
-    aprop = tdscf(the_scf,prm)
+    aprop = tdscf(the_scf,prm,output)
     return
 
 TestTDSCF()
