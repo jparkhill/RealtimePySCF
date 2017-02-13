@@ -18,7 +18,6 @@
 
   void updatefield(cx_mat& C)
   {
-		cout << "mux.n_cols, n_rows" << mux.n_cols << " " << mux.n_rows << endl;
     muxo=C.t()*mux*C;
 		muyo=C.t()*muy*C;
 		muzo=C.t()*muz*C;
