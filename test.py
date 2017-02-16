@@ -4,7 +4,7 @@ import pyscf.dft
 np.set_printoptions(linewidth=220, suppress = True,precision = 7)
 
 
-def TestTDSCF():
+def TestTDHF():
     """
     Tests Basic Propagation Functionality.
     """

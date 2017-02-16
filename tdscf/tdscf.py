@@ -19,7 +19,7 @@ class tdscf:
 
     By default it does
     """
-    def __init__(self,the_scf_,prm=None,output = 'log.dat'):
+    def __init__(self,the_scf_,prm=None,output = 'log.dat', prop_=True):
         """
         Args:
             the_scf an SCF object from pyscf (should probably take advantage of complex RKS already in PYSCF)
@@ -42,7 +42,6 @@ class tdscf:
         self.n_mo = None
         self.n_occ = None
         self.n_e = None
-
         #Global Matrices
         self.rho = None # Current MO basis density matrix. (the idempotent (0,1) kind)
         self.rhoM12 = None # For MMUT step
@@ -55,17 +54,20 @@ class tdscf:
         self.H = None # (ao X ao)  core hamiltonian.
         self.B = None # for ee2
         self.log = []
-
         # Objects
         self.the_scf  = the_scf_
         self.mol = the_scf_.mol
-        self.auxmol_set()
+        # Should only do this if you need the integrals.
         self.params = dict()
         self.initialcondition(prm)
+
+        if (self.params["Model"]=="TDCIS" || self.params["Model"]=="EE2" || self.params["Model"]=="BBGKY"  ):
+            self.auxmol_set()
+
         self.field = fields(the_scf_, self.params)
         self.field.InitializeExpectation(self.rho, self.C)
-        #self.CField()
-        self.prop(output)
+        if (prop_):
+            self.prop(output)
         return
 
     def auxmol_set(self,auxbas = "weigend"):
@@ -105,13 +107,10 @@ class tdscf:
                 eri2c[pk:pk+dk,pl:pl+dl] = buf
                 pl += dl
             pk += dk
-
         self.eri3c = eri3c
         self.eri2c = eri2c
-
         RSinv = MatrixPower(eri2c,-0.5)
         self.B = np.einsum('ijp,pq->ijq', self.eri3c, RSinv) # (AO,AO,n_aux)
-
         return
 
     def FockBuildc(self,P):
@@ -542,7 +541,6 @@ class tdscf:
         return
 
     def EE2step(self,time):
-
         if (self.params["Method"] == "MMUT"):
             libtdscf.MMUT_step(self.rho.ctypes.data_as(ctypes.c_void_p), self.rhoM12.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(time))
             # Rho and RhoM12 is updated
