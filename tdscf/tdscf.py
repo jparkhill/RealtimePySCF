@@ -59,11 +59,8 @@ class tdscf:
         self.mol = the_scf_.mol
         # Should only do this if you need the integrals.
         self.params = dict()
+        self.auxmol_set()
         self.initialcondition(prm)
-
-        if (self.params["Model"]=="TDCIS" || self.params["Model"]=="EE2" || self.params["Model"]=="BBGKY"  ):
-            self.auxmol_set()
-
         self.field = fields(the_scf_, self.params)
         self.field.InitializeExpectation(self.rho, self.C)
         if (prop_):
@@ -592,6 +589,8 @@ class tdscf:
             EJ = TrDot(P,J)
             E = EH + EJ + Exc + self.Enuc
             return E.real
+        else :
+            return 0.0
 
 
 
