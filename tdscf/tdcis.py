@@ -8,12 +8,11 @@ from cmath import *
 from pyscf import lib
 import ctypes
 import tdscf
-
 #libtdscf = lib.load_library('libtdscf')
 
 FsPerAu = 0.0241888
 
-class tdcis(TDSCF):
+class tdcis(tdscf.tdscf):
     """
     TDCIS handles propagations which do not rotate the orbitals.
     during the propagation.
@@ -25,33 +24,35 @@ class tdcis(TDSCF):
         Returns:
             Nothing.
         """
-    	TDSCF.__init__(self, the_scf_, prm, output, prop_=False)
+    	tdscf.tdscf.__init__(self, the_scf_, prm, output, prop_=False)
         self.Bm = None
         self.MakeBMO()
         self.MakeVi()
+        self.prop(output)
         return
 
     def MakeBMO(self):
         self.Bmo = np.einsum('jip,ik->jkp', np.einsum('ijp,ik->kjp', self.B, self.C), self.C)
 
-    def MakeV(self):
+    def MakeVi(self):
         self.Vi = np.einsum('pqi,rsi->pqrs', self.Bmo,self.Bmo)
 
-    def Split_RK4_Step(self, w, v , oldrho , tnow, dt ,IsOn):
+    def Split_RK4_Step(self, w, v , oldrho , tnow, dt):
+        IsOn = False
         Ud = np.exp(w*(-0.5j)*dt);
         U = TransMat(np.diag(Ud),v,-1)
-        RhoHalfStepped = TransMat(oldrho,U,-1)
-        k1 = self.RhoDot( RhoHalfStepped, tnow, IsOn);
+        rhoHalfStepped = TransMat(oldrho,U,-1)
+        k1 = self.rhoDot( rhoHalfStepped, tnow, IsOn);
         v2 = (dt/2.0) * k1;
-        v2 += RhoHalfStepped;
-        k2 = self.RhoDot(  v2, tnow+(dt/2.0), IsOn);
+        v2 += rhoHalfStepped;
+        k2 = self.rhoDot(  v2, tnow+(dt/2.0), IsOn);
         v3 = (dt/2.0) * k2;
-        v3 += RhoHalfStepped;
-        k3 = self.RhoDot(  v3, tnow+(dt/2.0), IsOn);
+        v3 += rhoHalfStepped;
+        k3 = self.rhoDot(  v3, tnow+(dt/2.0), IsOn);
         v4 = (dt) * k3;
-        v4 += RhoHalfStepped;
-        k4 = self.RhoDot(  v4,tnow+dt,IsOn);
-        newrho = RhoHalfStepped;
+        v4 += rhoHalfStepped;
+        k4 = self.rhoDot(  v4,tnow+dt,IsOn);
+        newrho = rhoHalfStepped;
         newrho += dt*(1.0/6.0)*k1;
         newrho += dt*(2.0/6.0)*k2;
         newrho += dt*(2.0/6.0)*k3;
@@ -67,7 +68,7 @@ class tdcis(TDSCF):
             return BBGKYstep()
 
         if (self.params["Print"]>0.0):
-            nocs, nos = np.linalg.eig(self.Rho)
+            nocs, nos = np.linalg.eig(self.rho)
             print "Noocs: ", nocs
 
         # Make the exponential propagator.
@@ -75,46 +76,46 @@ class tdcis(TDSCF):
         FmoPlusField, IsOn = self.field.ApplyField(Fmo,self.C, time)
         w,v = scipy.linalg.eig(FmoPlusField)
 
-        # Full step RhoM12 to make new RhoM12.
-        NewRhoM12 = Split_RK4_Step(w, v, self.RhoM12, time, dt)
-        NewRho = Split_RK4_Step(w, v, NewRhoM12, time, dt/2.)
-        self.rho = 0.5*(NewRho+(NewRho.T.conj()));
-        self.rhoM12 = 0.5*(NewRhoM12+(NewRhoM12.T.conj()))
+        # Full step rhoM12 to make new rhoM12.
+        NewrhoM12 = self.Split_RK4_Step(w, v, self.rhoM12, time, self.params["dt"])
+        Newrho = self.Split_RK4_Step(w, v, NewrhoM12, time, self.params["dt"]/2.)
+        self.rho = 0.5*(Newrho+(Newrho.T.conj()));
+        self.rhoM12 = 0.5*(NewrhoM12+(NewrhoM12.T.conj()))
 
-    def RhoDot(self, Rho_, time, IsOn):
+    def rhoDot(self, rho_, time, IsOn):
         if (self.params["TDCIS"]):
-            return RhoDotCIS(Rho_)
+            return rhoDotCIS(rho_)
         elif (self.params["TDCISD"]):
-            return RhoDotCISD(Rho_)
+            return rhoDotCISD(rho_)
         elif (self.params["Corr"]):
-            return RhoDotCorr(Rho_, RhoDot_, time)
+            return rhoDotCorr(rho_, rhoDot_, time)
         else:
-            raise Exception("Unknown Rhodot.")
+            raise Exception("Unknown rhodot.")
 
-    def RhoDotCIS(self, Rho_):
+    def rhoDotCIS(self, rho_):
         """
         The bare fock parts of the EOM should already be done.
         for (int i=0; i<no; ++i)
         {
             for (int a=no; a<n; ++a)
-                if (abs(Rho_[a*n+i]) > 0.0000000001)
+                if (abs(rho_[a*n+i]) > 0.0000000001)
                     for (int ap=no; ap<n; ++ap)
                         for (int ip=0; ip<no; ++ip)
                         {
-                            tmp[ap*n+ip] += j*(2.0*Vi[ap*n3+i*n2+ip*n+a]-Vi[ap*n3+i*n2+a*n+ip])*Rho_[a*n+i];
+                            tmp[ap*n+ip] += j*(2.0*Vi[ap*n3+i*n2+ip*n+a]-Vi[ap*n3+i*n2+a*n+ip])*rho_[a*n+i];
                         }
         }
-        RhoDot_ += tmp+tmp.t();
+        rhoDot_ += tmp+tmp.t();
         """
-        tmp = 2.j*np.einsum("bija,ai->bj",self.Vi,Rho_)
-        tmp -= j*np.einsum("biaj,ai->bj",self.Vi,Rho_)
+        tmp = 2.j*np.einsum("bija,ai->bj",self.Vi,rho_)
+        tmp -= j*np.einsum("biaj,ai->bj",self.Vi,rho_)
         return tmp+tmp.T.conj()
 
     def BBGKYstep(self):
         """
         Propagation is done in the fock basis.
         """
-        if (self.params["Print"])
+        if (self.params["Print"]):
             print "BBGKY step"
 
         # Make the exponential propagator of HCore for fock and dipole parts.
@@ -123,31 +124,31 @@ class tdcis(TDSCF):
         w,v = scipy.linalg.eig(hmu)
         Ud = np.exp(w*(-0.5j)*dt);
         U = TransMat(np.diag(Ud),v,-1)
-        RhoHalfStepped = TransMat(self.Rho,U)
+        rhoHalfStepped = TransMat(self.rho,U)
 """
         BuildSpinOrbitalV();
 
-        cx_mat newrho(Rho_); newrho.zeros();
+        cx_mat newrho(rho_); newrho.zeros();
         // one body step.
         {
             arma::cx_mat k1(newrho),k2(newrho),k3(newrho),k4(newrho),v2(newrho),v3(newrho),v4(newrho);
             k1.zeros(); k2.zeros(); k3.zeros(); k4.zeros();
             v2.zeros(); v3.zeros(); v4.zeros();
 
-            bbgky1( RhoHalfStepped, k1,tnow);
+            bbgky1( rhoHalfStepped, k1,tnow);
             v2 = (dt/2.0) * k1;
-            v2 += RhoHalfStepped;
+            v2 += rhoHalfStepped;
 
             bbgky1(  v2, k2,tnow+(dt/2.0));
             v3 = (dt/2.0) * k2;
-            v3 += RhoHalfStepped;
+            v3 += rhoHalfStepped;
 
             bbgky1(  v3, k3,tnow+(dt/2.0));
             v4 = (dt) * k3;
-            v4 += RhoHalfStepped;
+            v4 += rhoHalfStepped;
 
             bbgky1(  v4, k4,tnow+dt);
-            newrho = RhoHalfStepped;
+            newrho = rhoHalfStepped;
             newrho += dt*(1.0/6.0)*k1;
             newrho += dt*(2.0/6.0)*k2;
             newrho += dt*(2.0/6.0)*k3;
@@ -180,15 +181,15 @@ class tdcis(TDSCF):
             Transform2(r2,U);
         }
 
-        Rho_ = U*newrho*U.t();
-        RhoM12_ = U*newrho*U.t();
-        //   TracedownConsistency(Rho_,r2); // Ensures the separable part = Rho at all times.
+        rho_ = U*newrho*U.t();
+        rhoM12_ = U*newrho*U.t();
+        //   TracedownConsistency(rho_,r2); // Ensures the separable part = rho at all times.
 
         if (!(params["BBGKY1"]) && !(params["TDTDA"]))
             return CorrelatedEnergy(r2);
         else
         {
-            return MeanFieldEnergy(Rho_);
+            return MeanFieldEnergy(rho_);
         }
     }
 """
