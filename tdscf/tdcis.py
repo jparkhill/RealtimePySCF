@@ -84,11 +84,11 @@ class tdcis(tdscf.tdscf):
 
     def rhoDot(self, rho_, time, IsOn):
         if (self.params["TDCIS"]):
-            return rhoDotCIS(rho_)
+            return self.rhoDotCIS(rho_)
         elif (self.params["TDCISD"]):
-            return rhoDotCISD(rho_)
+            return self.rhoDotCISD(rho_)
         elif (self.params["Corr"]):
-            return rhoDotCorr(rho_, rhoDot_, time)
+            return self.rhoDotCorr(rho_, rhoDot_, time)
         else:
             raise Exception("Unknown rhodot.")
 
@@ -108,7 +108,7 @@ class tdcis(tdscf.tdscf):
         rhoDot_ += tmp+tmp.t();
         """
         tmp = 2.j*np.einsum("bija,ai->bj",self.Vi,rho_)
-        tmp -= j*np.einsum("biaj,ai->bj",self.Vi,rho_)
+        tmp -= 1.j*np.einsum("biaj,ai->bj",self.Vi,rho_)
         return tmp+tmp.T.conj()
 
     def BBGKYstep(self):

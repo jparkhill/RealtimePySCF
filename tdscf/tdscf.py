@@ -228,6 +228,7 @@ class tdscf:
         self.params["Model"] = "TDDFT" #"TDHF"; the difference of Fock matrix and energy
         self.params["Method"] = "MMUT"#"MMUT"
         self.params["BBGKY"]=0
+        self.params["TDCIS"]=1
 
         self.params["dt"] =  0.02
         self.params["MaxIter"] = 15000
@@ -243,7 +244,7 @@ class tdscf:
         self.params["ApplyCw"] = 0
 
         self.params["StatusEvery"] = 5000
-        self.params["Print"]=1
+        self.params["Print"]=0
         # Here they should be read from disk.
         if(prm != None):
             for line in prm.splitlines():
