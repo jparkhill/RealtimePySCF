@@ -41,6 +41,7 @@ class tdscf:
         self.n_ao = None
         self.n_mo = None
         self.n_occ = None
+        self.n_virt = None
         self.n_e = None
         #Global Matrices
         self.rho = None # Current MO basis density matrix. (the idempotent (0,1) kind)
@@ -63,6 +64,7 @@ class tdscf:
         self.initialcondition(prm)
         self.field = fields(the_scf_, self.params)
         self.field.InitializeExpectation(self.rho, self.C)
+        self.rho0 = self.rho.copy()
         if (prop_):
             self.prop(output)
         return
@@ -216,6 +218,7 @@ class tdscf:
         n_ao = self.n_ao = self.the_scf.make_rdm1().shape[0]
         n_mo = self.n_mo = n_ao # should be fixed.
         n_occ = self.n_occ = int(sum(self.the_scf.mo_occ)/2)
+        self.n_virt = self.n_mo - self.n_occ
         print "n_ao:", n_ao, "n_mo:", n_mo, "n_occ:", n_occ
         self.ReadParams(prm)
         self.InitializeLiouvillian()
@@ -385,8 +388,7 @@ class tdscf:
                 self.FockDFTbuild(Plao)
             E = self.energy(Plao)
             err = abs(E-Eold)
-            if (it%10 ==0):
-                print "Iteration:", it,"; Energy:",E,"; Error =",err
+            print "Iteration:", it,"; Energy:",E,"; Error =",err
             it += 1
         Pmo = 0.5*np.diag(self.the_scf.mo_occ).astype(complex)
         Plao = TransMat(Pmo,self.V,-1)
@@ -491,7 +493,6 @@ class tdscf:
             NewRho = self.Split_RK4_Step_MMUT(w, v, NewRhoM12, time,self.params["dt"]/2.0, IsOn)
             self.rho = 0.5*(NewRho+(NewRho.T.conj()));
             self.rhoM12 = 0.5*(NewRhoM12+(NewRhoM12.T.conj()))
-
         elif (self.params["Method"] == "RK4"):
             raise Exception("Broken.")
             dt = self.params["dt"]
@@ -541,7 +542,6 @@ class tdscf:
         if (self.params["Method"] == "MMUT"):
             libtdscf.MMUT_step(self.rho.ctypes.data_as(ctypes.c_void_p), self.rhoM12.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(time))
             # Rho and RhoM12 is updated
-
         elif (self.params["Method"] == "RK4"):
             #
             newrho = self.rho.copy()
@@ -591,8 +591,6 @@ class tdscf:
             return E.real
         else :
             return 0.0
-
-
 
     def loginstant(self,iter):
         """

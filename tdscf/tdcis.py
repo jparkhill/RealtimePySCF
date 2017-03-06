@@ -36,6 +36,19 @@ class tdcis(tdscf.tdscf):
 
     def MakeVi(self):
         self.Vi = np.einsum('pqi,rsi->pqrs', self.Bmo,self.Bmo)
+        self.d2 = np.array([[j-i for i in self.eigs] for j in self.eigs])
+        print self.d2
+        # Check this with a quick MP2...
+        T=np.zeros((self.n_occ,self.n_occ,self.n_virt,self.n_virt))
+        for i in range(self.n_occ):
+            for j in range(self.n_occ):
+                for a in range(self.n_occ,self.n_mo):
+                    for b in range(self.n_occ,self.n_mo):
+                        T[i,j,a-self.n_occ,b-self.n_occ] = (2.0*self.Vi[i,j,a,b]-self.Vi[i,j,b,a])/(self.eigs[a]+self.eigs[b]-self.eigs[i]-self.eigs[j])
+                        print "T*V", i,j,a,b, self.Vi[i,j,a,b], T[i,j,a-self.n_occ,b-self.n_occ]*self.Vi[i,j,a,b]
+
+        emp2 = np.einsum('ijab,ijab',T,self.Vi[:self.n_occ,:self.n_occ,self.n_occ:,self.n_occ:])
+        print "EMP2******", emp2
 
     def Split_RK4_Step(self, w, v , oldrho , tnow, dt):
         IsOn = False
@@ -64,8 +77,8 @@ class tdcis(tdscf.tdscf):
         """
         Direct port of our gen_scfman/TCL_EE2.h::step()
         """
-        if (self.params["BBGKY"]):
-            return BBGKYstep()
+        if (self.params["Model"]=="BBGKY"):
+            return self.BBGKYstep(time)
 
         if (self.params["Print"]>0.0):
             nocs, nos = np.linalg.eig(self.rho)
@@ -107,89 +120,66 @@ class tdcis(tdscf.tdscf):
         }
         rhoDot_ += tmp+tmp.t();
         """
+        #print "EH binding energy: ", self.Vi[self.n_occ,self.n_occ-1,self.n_occ,self.n_occ-1]
         tmp = 2.j*np.einsum("bija,ai->bj",self.Vi,rho_)
         tmp -= 1.j*np.einsum("biaj,ai->bj",self.Vi,rho_)
         return tmp+tmp.T.conj()
 
-    def BBGKYstep(self):
+    def rhoDotTDTDA(self, Rho_):
+        """
+            Time-dependent tamm-dancoff approximation
+            depends on current rho_ which is in the MO basis.
+            and Rho0 in the same basis.
+        """
+
+        J = -2.j*np.einsum("bija,ai->bj",self.Vi,self.rho0)
+        K = 1.j*np.einsum("biaj,ai->bj",self.Vi,self.rho0)
+        tmp=(J+K)*Rho_ - Rho_*(J+K); # h + this is the fock part.
+        RhoDot_ = tmp;
+
+        # Eliminate OV-VO couplings.
+        if 0:
+            J = -2.j*np.einsum("bija,ai->bj",self.Vi,Rho0)
+            K = 1.j*np.einsum("biaj,ai->bj",self.Vi,Rho0)
+            tmp=(J+K)*Rho_ - Rho_*(J+K); # h + this is the fock part.
+            RhoDot_ += tmp;
+
+            J = -2.j*np.einsum("bija,ai->bj",self.Vi,Rho0)
+            K = 1.j*np.einsum("biaj,ai->bj",self.Vi,Rho0)
+            tmp=(J+K)*Rho_ - Rho_*(J+K); # h + this is the fock part.
+            RhoDot_ += tmp;
+        return RhoDot_
+
+    def BBGKYstep(self,time):
         """
         Propagation is done in the fock basis.
         """
         if (self.params["Print"]):
             print "BBGKY step"
-
         # Make the exponential propagator of HCore for fock and dipole parts.
         hmu = TransMat(self.H,self.C)
         hmu, IsOn = self.field.ApplyField(hmu, self.C, time)
         w,v = scipy.linalg.eig(hmu)
-        Ud = np.exp(w*(-0.5j)*dt);
+        Ud = np.exp(w*(-0.5j)*self.params["dt"]);
         U = TransMat(np.diag(Ud),v,-1)
         rhoHalfStepped = TransMat(self.rho,U)
-"""
-        BuildSpinOrbitalV();
+        newrho = rhoHalfStepped.copy()
+        # one body parts.
+        if (1):
+            k1 = self.bbgky1(rhoHalfStepped)
+            v2 = (0.5 * self.params["dt"])*k1
+            v2 += rhoHalfStepped
+            k2 = self.bbgky1(v2)
+            v3 = (0.5 * self.params["dt"])*k2
+            v3 += rhoHalfStepped
+            k3 = self.bbgky1(v3)
+            v4 = (1.0 * self.params["dt"])*k3
+            v4 += rhoHalfStepped
+            k4 = self.bbgky1(v4)
+            newrho += self.params["dt"]/6.0 * (k1 + 2.0*k2 + 2.0*k3 + k4)
+        self.rho = TransMat(newrho,U)
+        self.rhoM12 = TransMat(newrho,U)
 
-        cx_mat newrho(rho_); newrho.zeros();
-        // one body step.
-        {
-            arma::cx_mat k1(newrho),k2(newrho),k3(newrho),k4(newrho),v2(newrho),v3(newrho),v4(newrho);
-            k1.zeros(); k2.zeros(); k3.zeros(); k4.zeros();
-            v2.zeros(); v3.zeros(); v4.zeros();
-
-            bbgky1( rhoHalfStepped, k1,tnow);
-            v2 = (dt/2.0) * k1;
-            v2 += rhoHalfStepped;
-
-            bbgky1(  v2, k2,tnow+(dt/2.0));
-            v3 = (dt/2.0) * k2;
-            v3 += rhoHalfStepped;
-
-            bbgky1(  v3, k3,tnow+(dt/2.0));
-            v4 = (dt) * k3;
-            v4 += rhoHalfStepped;
-
-            bbgky1(  v4, k4,tnow+dt);
-            newrho = rhoHalfStepped;
-            newrho += dt*(1.0/6.0)*k1;
-            newrho += dt*(2.0/6.0)*k2;
-            newrho += dt*(2.0/6.0)*k3;
-            newrho += dt*(1.0/6.0)*k4;
-        }
-        // Two-body step.
-        if (!params["BBGKY1"])
-        {
-            Transform2(r2,U);
-
-            arma::cx_mat k1(r2),k2(r2),k3(r2),k4(r2),v2(r2),v3(r2),v4(r2);
-            k1.zeros(); k2.zeros(); k3.zeros(); k4.zeros();
-            v2.zeros(); v3.zeros(); v4.zeros();
-
-            bbgky2( r2, k1,tnow);
-            v2 = (dt/2.0) * k1;
-            v2 += r2;
-            bbgky2(  v2, k2,tnow+(dt/2.0));
-            v3 = (dt/2.0) * k2;
-            v3 += r2;
-            bbgky2(  v3, k3,tnow+(dt/2.0));
-            v4 = (dt) * k3;
-            v4 += r2;
-            bbgky2(  v4, k4,tnow+dt);
-            r2 += dt*(1.0/6.0)*k1;
-            r2 += dt*(2.0/6.0)*k2;
-            r2 += dt*(2.0/6.0)*k3;
-            r2 += dt*(1.0/6.0)*k4;
-
-            Transform2(r2,U);
-        }
-
-        rho_ = U*newrho*U.t();
-        rhoM12_ = U*newrho*U.t();
-        //   TracedownConsistency(rho_,r2); // Ensures the separable part = rho at all times.
-
-        if (!(params["BBGKY1"]) && !(params["TDTDA"]))
-            return CorrelatedEnergy(r2);
-        else
-        {
-            return MeanFieldEnergy(rho_);
-        }
-    }
-"""
+    def bbgky1(self,rho_):
+        return self.rhoDotTDTDA(rho_)
+        # Here I should have code for the normal Bbgky1 ported out of qchem.
