@@ -35,20 +35,20 @@ class tdcis(tdscf.tdscf):
         self.Bmo = np.einsum('jip,ik->jkp', np.einsum('ijp,ik->kjp', self.B, self.C), self.C)
 
     def MakeVi(self):
-        self.Vi = np.einsum('pqi,rsi->pqrs', self.Bmo,self.Bmo)
+        self.Vi = np.einsum('pri,qsi->pqrs', self.Bmo,self.Bmo)
         self.d2 = np.array([[j-i for i in self.eigs] for j in self.eigs])
-        print self.d2
-        # Check this with a quick MP2...
-        T=np.zeros((self.n_occ,self.n_occ,self.n_virt,self.n_virt))
-        for i in range(self.n_occ):
-            for j in range(self.n_occ):
-                for a in range(self.n_occ,self.n_mo):
-                    for b in range(self.n_occ,self.n_mo):
-                        T[i,j,a-self.n_occ,b-self.n_occ] = (2.0*self.Vi[i,j,a,b]-self.Vi[i,j,b,a])/(self.eigs[a]+self.eigs[b]-self.eigs[i]-self.eigs[j])
-                        print "T*V", i,j,a,b, self.Vi[i,j,a,b], T[i,j,a-self.n_occ,b-self.n_occ]*self.Vi[i,j,a,b]
+        if (0):
+            # Check this with a quick MP2... works.
+            T=np.zeros((self.n_occ,self.n_occ,self.n_virt,self.n_virt))
+            for i in range(self.n_occ):
+                for j in range(self.n_occ):
+                    for a in range(self.n_occ,self.n_mo):
+                        for b in range(self.n_occ,self.n_mo):
+                            T[i,j,a-self.n_occ,b-self.n_occ] = (2.0*self.Vi[i,j,a,b]-self.Vi[i,j,b,a])/(self.eigs[a]+self.eigs[b]-self.eigs[i]-self.eigs[j])
+                            print "T*V", i,j,a,b, self.Vi[i,j,a,b], T[i,j,a-self.n_occ,b-self.n_occ]*self.Vi[i,j,a,b]
 
-        emp2 = np.einsum('ijab,ijab',T,self.Vi[:self.n_occ,:self.n_occ,self.n_occ:,self.n_occ:])
-        print "EMP2******", emp2
+            emp2 = np.einsum('ijab,ijab',T,self.Vi[:self.n_occ,:self.n_occ,self.n_occ:,self.n_occ:])
+            print "EMP2******", emp2
 
     def Split_RK4_Step(self, w, v , oldrho , tnow, dt):
         IsOn = False
@@ -131,10 +131,9 @@ class tdcis(tdscf.tdscf):
             depends on current rho_ which is in the MO basis.
             and Rho0 in the same basis.
         """
-
         J = -2.j*np.einsum("bija,ai->bj",self.Vi,self.rho0)
         K = 1.j*np.einsum("biaj,ai->bj",self.Vi,self.rho0)
-        tmp=(J+K)*Rho_ - Rho_*(J+K); # h + this is the fock part.
+        tmp=np.dot((J+K),Rho_) - np.dot(Rho_,(J+K)) # h + this is the fock part.
         RhoDot_ = tmp;
 
         # Eliminate OV-VO couplings.
@@ -162,7 +161,7 @@ class tdcis(tdscf.tdscf):
         w,v = scipy.linalg.eig(hmu)
         Ud = np.exp(w*(-0.5j)*self.params["dt"]);
         U = TransMat(np.diag(Ud),v,-1)
-        rhoHalfStepped = TransMat(self.rho,U)
+        rhoHalfStepped = TransMat(self.rho,U,-1)
         newrho = rhoHalfStepped.copy()
         # one body parts.
         if (1):
@@ -177,8 +176,8 @@ class tdcis(tdscf.tdscf):
             v4 += rhoHalfStepped
             k4 = self.bbgky1(v4)
             newrho += self.params["dt"]/6.0 * (k1 + 2.0*k2 + 2.0*k3 + k4)
-        self.rho = TransMat(newrho,U)
-        self.rhoM12 = TransMat(newrho,U)
+        self.rho = TransMat(newrho,U,-1)
+        self.rhoM12 = TransMat(newrho,U,-1)
 
     def bbgky1(self,rho_):
         return self.rhoDotTDTDA(rho_)

@@ -65,6 +65,7 @@ class tdscf:
         self.field = fields(the_scf_, self.params)
         self.field.InitializeExpectation(self.rho, self.C)
         self.rho0 = self.rho.copy()
+        np.set_printoptions(precision = 7)
         if (prop_):
             self.prop(output)
         return
@@ -189,19 +190,10 @@ class tdscf:
         '''
         naux = self.n_aux
         nao = self.n_ao
-        #rP = np.zeros((nao,nao)).astype(complex)
-        #iP = np.zeros((nao,nao)).astype(complex)
-        #rP += P.real
-        #iP += 1j*P.imag
         kpj = np.einsum('ijp,jk->ikp', self.eri3c, P)
         pik = np.linalg.solve(self.eri2c, kpj.reshape(-1,naux).T.conj())
         rkmat = np.einsum('pik,kjp->ij', pik.reshape(naux,nao,nao), self.eri3c)
-        #print 'K(AO)\n',rkmat
-        #print 'K(MO)\n',TransMat(rkmat,self.Cinv,-1)
-        #kpj = np.einsum('ijp,jk->ikp', self.eri3c, iP)
-        #pik = np.linalg.solve(self.eri2c, kpj.reshape(-1,naux).T.conj())
-        #ikmat = np.einsum('pik,kjp->ij', pik.reshape(naux,nao,nao), self.eri3c)
-        return rkmat #+ ikmat
+        return rkmat
 
     def initialcondition(self,prm):
         print '''
@@ -382,10 +374,12 @@ class tdscf:
             Plao = TransMat(Pmo,self.V,-1)
             #print "Ne", np.trace(Plao), np.trace(Pmo)
             Eold = E
-            if self.params["Model"] == "TDHF":
+            if (self.params["Model"] == "TDHF" or self.params["Model"] == "BBGKY"):
                 self.F = self.FockBuildc(Plao)
             elif self.params["Model"] == "TDDFT":
                 self.FockDFTbuild(Plao)
+            else:
+                raise Exception("NoSCF")
             E = self.energy(Plao)
             err = abs(E-Eold)
             print "Iteration:", it,"; Energy:",E,"; Error =",err
@@ -576,7 +570,7 @@ class tdscf:
         """
         P: Density in LAO basis.
         """
-        if self.params["Model"] == "TDHF":
+        if (self.params["Model"] == "TDHF" or self.params["Model"] == "BBGKY"):
             Hlao = TransMat(self.H,self.X)
             return (self.Enuc+np.trace(np.dot(Plao,Hlao+self.F))).real
         elif self.params["Model"] == "TDDFT":
@@ -596,7 +590,6 @@ class tdscf:
         """
         time is logged in atomic units.
         """
-        np.set_printoptions(precision = 7)
         tore = str(self.t)+" "+str(self.dipole().real).rstrip(']').lstrip('[]')+ " " +str(self.energy(TransMat(self.rho,self.V,-1),False))+" "+str(np.trace(self.rho))
         #tore = str(self.t)+" "+str(np.sin(0.5*np.ones(3)*self.t)).rstrip(']').lstrip('[]')+ " " +str(self.energyc(TransMat(self.rho,self.C,-1),False)+self.Enuc)
         #print tore
