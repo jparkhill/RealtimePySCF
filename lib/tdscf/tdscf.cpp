@@ -4,6 +4,9 @@
 using namespace arma;
 #include "tdscf.h"
 #include "field.h"
+#include "bo.h"
+//#include "tddft.h"
+#include "func.h"
 
 void Initialize(double *h, double *s, double *x, double *b, std::complex<double> *f, int n_, int n_aux_,int nocc_, double Enuc, double dt_)
 {

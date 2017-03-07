@@ -26,7 +26,6 @@
 		muzo = 0.5*(muzo+muzo.t());
 
   }
-}
   vec Expectation(const arma::cx_mat& pin, bool Initialize=true)
 	{
 		vec tore(3);
@@ -88,7 +87,7 @@
       CwLaser(arg,tnow);
   }
 
-
+}
 
 
 #ifdef __cplusplus

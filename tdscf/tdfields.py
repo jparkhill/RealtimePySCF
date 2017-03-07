@@ -11,6 +11,7 @@ class fields:
     """
     def __init__(self,the_scf_, params_):
         self.dip_ints = None # AO dipole integrals.
+        self.dip_ints_bo = None
         self.nuc_dip = None
         self.dip_mo = None # Nuclear dipole (AO)
         self.Generate(the_scf_)
@@ -20,6 +21,7 @@ class fields:
         self.FieldFreq = params_["FieldFreq"]
         self.pol = np.array([params_["ExDir"],params_["EyDir"],params_["EzDir"]])
         self.pol0 = None
+        self.pol0AA = None
         return
 
     def Generate(self,the_scf):
@@ -37,12 +39,12 @@ class fields:
         '''
         Args:
             c_mat: Transformation matrix (AOx??)
-        Updates dip_mo to (?? x ??)
+        Updates dip_int to (?? x ??)
         '''
-        self.dip_mo = self.dip_ints.astype(complex).copy()
-        self.dip_mo[0] = TransMat(self.dip_ints[0],c_mat,-1)
-        self.dip_mo[1] = TransMat(self.dip_ints[1],c_mat,-1)
-        self.dip_mo[2] = TransMat(self.dip_ints[2],c_mat,-1)
+        #self.dip_mo = self.dip_ints.astype(complex).copy()
+        #self.dip_mo[0] = TransMat(self.dip_ints[0],c_mat,-1)
+        #self.dip_mo[1] = TransMat(self.dip_ints[1],c_mat,-1)
+        #self.dip_mo[2] = TransMat(self.dip_ints[2],c_mat,-1)
         return
 
     def ImpulseAmp(self,time):
@@ -52,8 +54,14 @@ class fields:
             IsOn = True
         return amp,IsOn
 
-    def InitializeExpectation(self,rho0_, C_):
+    def InitializeExpectation(self,rho0_, C_,nA = None):
         self.pol0 = self.Expectation(rho0_,C_)
+        if nA != None:
+            self.dip_ints_bo = self.dip_ints.copy()
+            for i in range(3):
+                self.dip_ints_bo[i] = TransMat(self.dip_ints[i],C_)
+            self.pol0AA = self.Expectation(rho0_,C_,True,nA)
+
 
     def ApplyField(self, a_mat, time):
         """
@@ -89,7 +97,7 @@ class fields:
         else :
             return a_mat, False
 
-    def Expectation(self, rho_, C_):
+    def Expectation(self, rho_, C_, AA = False, nA = None,U = None):
         """
         Args:
             rho_: current MO density.
@@ -99,16 +107,16 @@ class fields:
         """
         # At this point convert both into MO and then calculate the dipole...
         rhoAO = TransMat(rho_,C_,-1)
-        e_dip = np.einsum('xij,ji->x', self.dip_ints, rhoAO)
-        mol_dip = e_dip
-
-        #mol_dip = np.einsum('xij,ji->x', self.dip_mo, rho_)
-        if (self.pol0 != None):
-            #print "Original Dipole\n",e_dip - self.pol0
-            #print "MO calculated Dipole\n", np.einsum('xij,ji->x', self.dip_mo, rho_) - self.pol0
-            return mol_dip - self.pol0#2.0*np.einsum("ij,jik->k",rhoMO,muMO) - self.pol0
-
-
+        if (AA):
+            # first try in AO basis, if it does not work then in BO
+            e_dip = np.einsum('xij,ji->x', self.dip_ints[:,:nA,:nA], rhoAO[:nA,:nA])
+            if (self.pol0AA != None):
+                return e_dip - self.pol0AA
+            else:
+                return e_dip
         else:
-
-            return mol_dip#2.0*np.einsum("ij,jik->k",rhoMO,muMO)
+            mol_dip = np.einsum('xij,ji->x', self.dip_ints, rhoAO)
+            if (self.pol0 != None):
+                return mol_dip - self.pol0#2.0*np.einsum("ij,jik->k",rhoMO,muMO) - self.pol0
+            else:
+                return mol_dip#2.0*np.einsum("ij,jik->k",rhoMO,muMO)
