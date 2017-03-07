@@ -8,14 +8,13 @@ import ctypes
 
 FsPerAu = 0.0241888
 
-class BORHF():
-    def __init__(self, atom, basis, n, xc = None, prm = None, output = 'log.dat', AA = True):
+class Embedded():
+    def __init__(self, atom, basis, n, xc = None, prm = None, output = 'log.dat'):
         """
         Make a BlockOrthogonalizedRHF
         Args: mol1_, mol2_ fragments to make a block orthogonal SCF from.
         """
 
-        self.AA = AA
         self.adiis = None
         self.JKtilde = None
         self.basis = basis
@@ -25,6 +24,7 @@ class BORHF():
         # objects
         self.m1, self.m2, self.m3 = self.MixedBasisMol(atom,basis,n)
         self.hf1, self.hf2, self.hf3 = self.MixedTheory(xc)
+
         # Global Variables
         self.AOExc = None
         self.BOExc = None
@@ -34,29 +34,27 @@ class BORHF():
         self.n_ao = np.zeros(3)
         self.n_mo = None
         self.n_aux = np.zeros(3)
-        self.n_occ = int(sum(self.hf3.mo_occ)/2)
+        self.n_occ = None
         self.Enuc = self.hf3.energy_nuc()
         self.Exc = np.zeros(3)
+
         # Global Matrices
         self.C = None
         self.eri3c = []
         self.eri2c = []
         self.H = self.hf3.get_hcore()
         self.S = self.hf3.get_ovlp() # AOxAO
-        self.U = BOprojector(self.m1,self.m3) #(AO->BO)
-        self.Htilde = TransMat(self.H,self.U)
-        self.Stilde = TransMat(self.S,self.U)
-        self.X = MatrixPower(self.S,-1./2.) # AO->LAO
-        self.Xtilde = MatrixPower(self.Stilde,-1./2.)
-        self.O = None #(MO->BO) = C * U
+        rhotemp = self.hf3.make_rdm1()
+        print self.nA
+        print self.n
+        print TrDot(rhotemp,self.S)
+        quit()
+        #rhotemp =
+        #self.PB = reduce(np.dot, [self.S,])
         self.Vtilde = None
-
         # Propagation Steps
         #print self.hyb
-        self.B0 = None # nA,nA, n_aux0
-        self.B1 = None # n, n, n_aux1
         self.auxmol_set()
-        self.CBOsetup()
         self.params = dict()
         self.initialcondition(prm)
         self.field = fields(self.hf3, self.params)
@@ -67,13 +65,6 @@ class BORHF():
         end = time.time()
         print "Propagation time:", end - start
         return
-
-    def CBOsetup(self):
-        print "============================="
-        libtdscf.SetupBO(\
-        ctypes.c_int(int(self.nA)),ctypes.c_int(int(self.n_ao[2])),ctypes.c_int(int(self.n_occ)),ctypes.c_int(int(self.n_aux[2])),ctypes.c_int(int(self.n_aux[0])),\
-        self.U.ctypes.data_as(ctypes.c_void_p), \
-        self.B0.ctypes.data_as(ctypes.c_void_p), self.B1.ctypes.data_as(ctypes.c_void_p))
 
     def MixedBasisMol(self, atm, bas, n):
         # For mixed Basis of AA and BB
@@ -107,6 +98,9 @@ class BORHF():
         mol1 = gto.Mole()
         mol1.atom = atm1
         mol1.basis = bas[0]
+        #print mol1.nao_nr()
+        mol1.spin = 1
+        #mol1.charge = 1
         mol1.build()
 
         mol2 = mol1
@@ -120,13 +114,13 @@ class BORHF():
         return mol1,mol2,mol3
 
     def MixedTheory(self,xc):
-        # Generate Mixed HF objects
+        #Generate Mixed HF objects
         print "\n================"
         print "=   AA Block   ="
         print "================"
         print "Basis:", self.basis[0]
         print "Theory:",xc[0]
-        m1 = dft.rks.RKS(self.m1)
+        m1 = dft.uks.UKS(self.m1)
         m1.xc = xc[0]
         m1.grids.level = 1
         m1.kernel()
@@ -135,7 +129,7 @@ class BORHF():
         self.hyb[0] = m1._numint.hybrid_coeff(m1.xc, spin=(m1.mol.spin>0)+1)
         print "Basis:", self.basis[0]
         print "Theory:",xc[1]
-        m2 = dft.rks.RKS(self.m2)
+        m2 = dft.uks.UKS(self.m2)
         m2.xc = xc[1]
         m2.grids.level = 1
         m2.kernel()
@@ -155,11 +149,6 @@ class BORHF():
         self.scf.append(m3)
         self.m.append(self.m3)
         self.hyb[2] = m3._numint.hybrid_coeff(m3.xc, spin=(m3.mol.spin>0)+1)
-
-        #hf4 = dft.rks.RKS(self.m3)
-        #hf4.xc = xc[0]
-        #self.hf4 = hf4
-
 
         return m1,m2,m3
 
@@ -210,10 +199,6 @@ class BORHF():
 
         self.eri3c.append(eri3c)
         self.eri2c.append(eri2c)
-
-        RSinv = MatrixPower(eri2c,-0.5)
-        self.B0 = np.einsum('ijp,pq->ijq', eri3c, RSinv)
-
         auxmol = mol = nao = naux = None
 
         auxmol = gto.Mole()
@@ -259,8 +244,6 @@ class BORHF():
         print "\nWHOLE INT GENERATED"
         self.eri3c.append(eri3c)
         self.eri2c.append(eri2c)
-        RSinv = MatrixPower(eri2c,-0.5)
-        self.B1 = np.einsum('ijp,pq->ijq', eri3c, RSinv)
         auxmol = mol = nao = naux = None
         return
 
@@ -437,7 +420,6 @@ class BORHF():
                 #self.Ktilde[:nA,:nA] = Ktilde[:nA,:nA].copy()
 
                 Ktilde = self.get_k(PtA,int(0))
-                #Ktilde = self.get_k_c(PtA,int(0))
                 self.Ktilde[:nA,:nA] = Ktilde
 
 
@@ -599,16 +581,6 @@ class BORHF():
             print "Did not specify the Block"
         return jmat
 
-    def get_k_c(self, P, mol = 3):
-        if mol == 0:
-            Pc = np.asarray(P, order='C').astype(complex)
-            Kmat = np.zeros((self.nA,self.nA)).astype(complex)
-            #Kmat = np.asarray(Kmat,order = 'C')
-            libtdscf.get_k0(\
-            Pc.ctypes.data_as(ctypes.c_void_p), Kmat.ctypes.data_as(ctypes.c_void_p))
-            # print Kmat
-            # quit()
-        return Kmat
     def get_k(self, P, mol = 3):
         '''
         Args:
@@ -627,12 +599,10 @@ class BORHF():
             naux = int(self.n_aux[mol])
             nao = int(self.n_ao[mol])
             kpj = np.einsum('ijp,jk->ikp', self.eri3c[mol], P)
-            pik = np.linalg.solve(self.eri2c[mol], kpj.reshape(-1,naux).T.conj()) # naux x naux, naux x n2
+            pik = np.linalg.solve(self.eri2c[mol], kpj.reshape(-1,naux).T.conj())
             rkmat = np.einsum('pik,kjp->ij', pik.reshape(naux,nao,nao)[:,:self.nA,:], self.eri3c[mol][:,:self.nA,:])
         else:
             print "Did not specify the Block"
-        # print rkmat
-        # quit()
         return rkmat
 
     def Split_RK4_Step_MMUT(self, w, v , oldrho , time, dt ,IsOn):
@@ -734,21 +704,13 @@ class BORHF():
         iter = 0
         self.t = 0
         f = open(output,'a')
-        start = time.time()
         aa = open(output + '.aa','a')
         print "Energy Gap (eV)",abs(self.eigs[self.n_occ]-self.eigs[self.n_occ-1])*27.2114
         print "\n\nPropagation Begins"
         while (iter<self.params["MaxIter"]):
             self.step(self.t)
             f.write(self.loginstant(iter)+"\n")
-            if (self.AA == True):
-                aa.write(self.AAlog(iter) + "\n")
-            if iter%self.params["StatusEvery"] ==0 or iter == self.params["MaxIter"]-1:
-                end = time.time()
-                if iter == 0:
-                    print "0"
-                else:
-                    print (end - start)/(self.t * FsPerAu), "sec/fs"
+            aa.write(self.AAlog(iter) + "\n")
             iter = iter + 1
             self.t = self.t + self.params["dt"]
         f.close()

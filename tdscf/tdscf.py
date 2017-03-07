@@ -1,5 +1,5 @@
 import numpy as np
-import scipy
+import scipy, os, time
 import scipy.linalg
 from func import *
 from pyscf import gto, dft, scf, ao2mo
@@ -8,7 +8,9 @@ from cmath import *
 from pyscf import lib
 import ctypes
 
-#libtdscf = lib.load_library('libtdscf')
+
+libtdscf = load_library( os.path.expanduser('~') +'/tdscf_pyscf/lib/tdscf/libtdscf')
+libdft = lib.load_library('libdft')
 
 FsPerAu = 0.0241888
 
@@ -27,7 +29,7 @@ class tdscf:
             Nothing.
         """
         #To be Sorted later
-        self.Enuc = the_scf_.e_tot - dft.rks.energy_elec(the_scf_,the_scf_.make_rdm1())[0]
+        self.Enuc = the_scf_.energy_nuc()#the_scf_.e_tot - dft.rks.energy_elec(the_scf_,the_scf_.make_rdm1())[0]
         self.eri3c = None
         self.eri2c = None
         self.n_aux = None
@@ -36,6 +38,8 @@ class tdscf:
         self.muzo = None
         self.mu0 = None
         self.hyb = the_scf_._numint.hybrid_coeff(the_scf_.xc, spin=(the_scf_.mol.spin>0)+1)
+        self.adiis = None
+        self.Exc = None
         #Global numbers
         self.t = 0.0
         self.n_ao = None
@@ -59,16 +63,22 @@ class tdscf:
         # Objects
         self.the_scf  = the_scf_
         self.mol = the_scf_.mol
+        self.MyBO = None
+        #if (params["Model"]=="TDHF_BO"):
+        #    self.MyBO = BORKS(...)
         self.auxmol_set()
         self.params = dict()
         self.initialcondition(prm)
         self.field = fields(the_scf_, self.params)
         self.field.InitializeExpectation(self.rho, self.C)
-        #self.CField()
+        start = time.time()
         self.prop(output)
+        end = time.time()
+        print "Propagation time:", end - start
         return
 
     def auxmol_set(self,auxbas = "weigend"):
+        print "GENERATING INTEGRALS"
         auxmol = gto.Mole()
         auxmol.atom = self.mol.atom
         auxmol.basis = auxbas
@@ -93,7 +103,7 @@ class tdscf:
                     pk += dk
                 pj += dj
             pi += di
-
+        print "ERI3C INTEGRALS GENERATED"
         eri2c = np.empty((naux,naux))
         pk = 0
         for k in range(mol.nbas, mol.nbas+auxmol.nbas):
@@ -105,16 +115,18 @@ class tdscf:
                 eri2c[pk:pk+dk,pl:pl+dl] = buf
                 pl += dl
             pk += dk
-
+        print "ERI2C INTEGRALS GENERATED"
         self.eri3c = eri3c
         self.eri2c = eri2c
 
         RSinv = MatrixPower(eri2c,-0.5)
         self.B = np.einsum('ijp,pq->ijq', self.eri3c, RSinv) # (AO,AO,n_aux)
+        print "RSINV & B GENERATED"
+
 
         return
 
-    def FockBuildc(self,P):
+    def FockBuild(self,P,it = -1):
         """
         Updates self.F given current self.rho (both complex.)
         Fock matrix with HF
@@ -123,25 +135,27 @@ class tdscf:
         Returns:
             Fock matrix(lao) . Updates self.F
         """
-        Pt = 2.0*TransMat(P,self.X,-1)
-        J,K = self.get_jk(Pt)
-        return  TransMat(self.H + 0.5*(J+J.T.conj()) - 0.5*(0.5*(K + K.T.conj())),self.X)
+        # if (self.params["Model"]=="TDHF_BO"):
+        #     return MyBO.FockBuild_BO(P) # transforms P into
+        if self.params["Model"] == "TDHF":
+            Pt = 2.0*TransMat(P,self.X,-1)
+            J,K = self.get_jk(Pt)
+            Veff = 0.5*(J+J.T.conj()) - 0.5*(0.5*(K + K.T.conj()))
+            if self.adiis and it > 0:
+                return TransMat(self.adiis.update(self.S,Pt,self.H + Veff),self.X)
+            else:
+                return  TransMat(self.H + 0.5*(J+J.T.conj()) - 0.5*(0.5*(K + K.T.conj())),self.X)
+        elif self.params["Model"] == "TDDFT":
+            Pt = 2 * TransMat(P,self.X,-1)
+            Veff = self.get_j(Pt)
+            #Veff = self.the_scf.get_j(self.the_scf.mol,Pt)
+            Veff += self.get_vxc(Pt)
+            #Veff = J + Vxc
+            if self.adiis and it > 0:
+                return TransMat(self.adiis.update(self.S,Pt,self.H + Veff),self.X)
+            else:
+                return TransMat(self.H + Veff,self.X)
 
-    def FockDFTbuild(self,P):
-        '''
-        Updates self.F given current self.rho (both complex.)
-        Fock matrix with DFT
-        Args:
-            P = LAO density matrix.
-        Returns:
-            Fock matrix(lao) . Updates self.F
-        '''
-        Pt = 2.0*TransMat(P,self.X,-1) # to AO
-        J = self.get_j(Pt)
-        Vxc = self.get_vxc(Pt) # Include the Hybrid with K matrix
-        Veff = J + Vxc
-        self.F = TransMat(self.H + 0.5*(Veff + Veff.T.conj()),self.X)
-        return self.F
 
     def get_vxc(self,P):
         '''
@@ -151,11 +165,98 @@ class tdscf:
         Returns:
             Vxc: Exchange and Correlation matrix (AO)
         '''
-        K = self.get_k(P)
-        nn, Exc, Vxc = self.the_scf._numint.nr_rks(self.mol, self.the_scf.grids, self.the_scf.xc, P.real, 0)
-        Vxc = Vxc.astype(complex)
-        Vxc += -0.5 * self.hyb * K
+        Vxc = self.numint_vxc(self.the_scf._numint,P)
+        if(self.hyb > 0.01):
+            K = self.get_k(P)
+            Vxc += -0.5 * self.hyb * K
         return Vxc
+
+    def numint_vxc(self,ni,P,max_mem = 2000):
+        xctype = self.the_scf._numint._xc_type(self.the_scf.xc)
+        make_rho, nset, nao = self._gen_rho_evaluator(self.mol, P, 1)
+        ngrids = len(self.the_scf.grids.weights)
+        non0tab = self.the_scf._numint.non0tab
+        vmat = np.zeros((nset,nao,nao)).astype(complex)
+        excsum = np.zeros(nset)
+
+        if xctype == 'LDA':
+            ao_deriv = 0
+            for ao, mask, weight, coords in ni.block_loop(self.mol, self.the_scf.grids, nao, ao_deriv, max_mem, non0tab):
+                rho = make_rho(0, ao, mask, 'LDA')
+                exc, vxc = ni.eval_xc(self.the_scf.xc, rho.real, 0, 0, 1, None)[:2]
+                vrho = vxc[0]
+                den = rho * weight
+                excsum[0] += (den * exc).sum()
+                aow = np.einsum('pi,p->pi', ao, .5*weight*vrho)
+                vmat += r_dot_product(ao.T,aow)#_dot_ao_ao(self.mol, ao, aow, nao, weight.size, mask)#r_dot_product(ao[0].T,aow)
+                rho = exc = vxc = vrho = aow = None
+        elif xctype == 'GGA':
+            ao_deriv = 1
+            for ao, mask, weight, coords in ni.block_loop(self.mol, self.the_scf.grids, nao, ao_deriv, max_mem, non0tab):
+                ngrid = weight.size
+                rho = make_rho(0, ao, mask, 'GGA') # rho should be real
+                exc, vxc = ni.eval_xc(self.the_scf.xc, rho.real, 0, 0, 1, None)[:2]
+                vrho, vsigma = vxc[:2]
+                wv = np.empty((4,ngrid))#.astype(complex)
+                wv[0]  = weight * vrho * .5
+                wv[1:] = rho[1:] * (weight * vsigma * 2)
+                aow = np.einsum('npi,np->pi', ao, wv)
+                vmat += r_dot_product(ao[0].T,aow) #_dot_ao_ao(self.mol, ao[0], aow, nao, ngrid, mask)#r_dot_product(ao[0].T,aow) #np.einsum('ij,jk->ik',ao[0].T,aow) #_dot_ao_ao(self.mol, ao[0], aow, nao, ngrid, mask)
+                den = rho[0] * weight
+                excsum[0] += (den * exc).sum()
+                # print weight.shape
+                # print vrho.shape
+                # print wv[0].shape
+                #
+                # print rho[1:].shape
+                # print vsigma.shape
+                # print wv[1:].shape
+                #
+                # print rho[0].shape
+                # print den.shape
+                # print exc.shape
+                # quit()
+                rho = exc = vxc = vrho = vsigma = wv = aow = None
+        else:
+            assert(all(x not in xc_code.upper() for x in ('CC06', 'CS', 'BR89', 'MK00')))
+            ao_deriv = 2
+            for ao, mask, weight, coords in ni.block_loop(self.mol, self.the_scf.grids, nao, ao_deriv, max_mem, non0tab):
+                ngrid = weight.size
+                rho = make_rho(0, ao, mask, 'MGGA')
+                exc, vxc = ni.eval_xc(self.the_scf.xc, rho.real, 0, 0, 1, None)[:2]
+                vrho, vsigma, vlapl, vtau = vxc[:4]
+                den = rho[0] * weight
+                excsum[0] += (den * exc).sum()
+                wv = np.empty((4,ngrid))
+                wv[0]  = weight * vrho * .5
+                wv[1:] = rho[1:4] * (weight * vsigma * 2)
+                aow = np.einsum('npi,np->pi', ao[:4], wv)
+                vmat += _dot_ao_ao(mol, ao[0], aow, nao, ngrid, mask)
+                wv = (.5 * .5 * weight * vtau).reshape(-1,1)
+                vmat += _dot_ao_ao(mol, ao[1], wv*ao[1], nao, ngrid, mask)#r_dot_product(ao[1].T,wv*ao[1])
+                vmat += _dot_ao_ao(mol, ao[2], wv*ao[2], nao, ngrid, mask)
+                vmat += _dot_ao_ao(mol, ao[3], wv*ao[3], nao, ngrid, mask)
+                rho = exc = vxc = vrho = vsigma = wv = aow = None
+        self.Exc = excsum[0]
+
+        Vxc = vmat.reshape(nao,nao)
+        Vxc = Vxc + Vxc.T.conj()
+
+        return Vxc
+
+    def _gen_rho_evaluator(self, mol, dms, hermi=1):
+        natocc = []
+        natorb = []
+        # originally scipy
+        e, c = scipy.linalg.eigh(dms)
+        natocc.append(e)
+        natorb.append(c)
+        nao = dms.shape[0]
+        ndms = len(natocc)
+        def make_rho(idm, ao, non0tab, xctype):
+            return eval_rhoc(mol, ao, natorb[idm], natocc[idm], non0tab, xctype)
+        return make_rho, ndms, nao
+
 
     def get_jk(self, P):
         '''
@@ -166,6 +267,12 @@ class tdscf:
             K: Exchange matrix
         '''
         return self.get_j(P), self.get_k(P)
+
+    # def get_jk(self,P,hermi = 1, vhfopt = None):
+    #     P = np.asarray(P,order='C')
+    #     nao = P.shape[-1]
+    #     vj, vk = direct(P.reshape(-1,nao,nao), self.mol._atm, self.mol._bas, self.mol._env, vhfopt=vhfopt, hermi=hermi)
+    #     return vj.reshape(dm.shape), vk.reshape(dm.shape)
 
     def get_j(self,P):
         '''
@@ -180,6 +287,7 @@ class tdscf:
         rho = np.einsum('ijp,ij->p', self.eri3c, P)
         rho = np.linalg.solve(self.eri2c, rho)
         jmat = np.einsum('p,ijp->ij', rho, self.eri3c)
+        #print "jmat\n",jmat
         return jmat
 
     def get_k(self,P):
@@ -191,19 +299,11 @@ class tdscf:
         '''
         naux = self.n_aux
         nao = self.n_ao
-        #rP = np.zeros((nao,nao)).astype(complex)
-        #iP = np.zeros((nao,nao)).astype(complex)
-        #rP += P.real
-        #iP += 1j*P.imag
         kpj = np.einsum('ijp,jk->ikp', self.eri3c, P)
         pik = np.linalg.solve(self.eri2c, kpj.reshape(-1,naux).T.conj())
         rkmat = np.einsum('pik,kjp->ij', pik.reshape(naux,nao,nao), self.eri3c)
-        #print 'K(AO)\n',rkmat
-        #print 'K(MO)\n',TransMat(rkmat,self.Cinv,-1)
-        #kpj = np.einsum('ijp,jk->ikp', self.eri3c, iP)
-        #pik = np.linalg.solve(self.eri2c, kpj.reshape(-1,naux).T.conj())
-        #ikmat = np.einsum('pik,kjp->ij', pik.reshape(naux,nao,nao), self.eri3c)
-        return rkmat #+ ikmat
+        #print "kmat\n",rkmat
+        return rkmat
 
     def initialcondition(self,prm):
         print '''
@@ -277,6 +377,7 @@ class tdscf:
         print "tOn:", self.params["tOn"]
         print "ApplyImpulse:", self.params["ApplyImpulse"]
         print "ApplyCw:", self.params["ApplyCw"]
+        print "StatusEvery:", self.params["StatusEvery"]
         print "=============================\n\n"
 
         return
@@ -295,83 +396,31 @@ class tdscf:
         self.rhoM12 = self.rho.copy()
         return
 
-    def InitFockBuildC(self):
-        '''
-        Transfer H,S,X,B to CPP
-        Initialize V matrix and eigs vec in CPP as well
-        Make Fockbuild
-        '''
-        F = np.zeros((self.n_ao,self.n_ao)).astype(complex)
-        libtdscf.Initialize(\
-        self.H.ctypes.data_as(ctypes.c_void_p),self.S.ctypes.data_as(ctypes.c_void_p),\
-        self.X.ctypes.data_as(ctypes.c_void_p),self.B.ctypes.data_as(ctypes.c_void_p),F.ctypes.data_as(ctypes.c_void_p),\
-        ctypes.c_int(self.n_ao),ctypes.c_int(self.n_aux),ctypes.c_int(self.n_occ),\
-        ctypes.c_double(self.Enuc), ctypes.c_double(self.params["dt"]))
-
-    def Field(self):
-        mux = 2*self.field.dip_ints[0].astype(complex)
-        muy = 2*self.field.dip_ints[1].astype(complex)
-        muz = 2*self.field.dip_ints[2].astype(complex)
-        nuc = self.field.nuc_dip
-        self.muxo = muxo.copy()
-        self.muyo = muyo.copy()
-        self.muzo = muzo.copy()
-        self.mu0 = mu0.copy()
-        return
-
-    def CField(self):
-        '''
-        setup field components in C
-        '''
-        mux = 2*self.field.dip_ints[0].astype(complex)
-        muy = 2*self.field.dip_ints[1].astype(complex)
-        muz = 2*self.field.dip_ints[2].astype(complex)
-        nuc = self.field.nuc_dip
-        libtdscf.FieldOn(\
-        self.rho.ctypes.data_as(ctypes.c_void_p),\
-        nuc.ctypes.data_as(ctypes.c_void_p),\
-        mux.ctypes.data_as(ctypes.c_void_p),\
-        muy.ctypes.data_as(ctypes.c_void_p),\
-        muz.ctypes.data_as(ctypes.c_void_p),\
-        ctypes.c_double(self.field.pol[0]), ctypes.c_double(self.field.pol[1]), ctypes.c_double(self.field.pol[2]),\
-        ctypes.c_double(self.params["FieldAmplitude"]), ctypes.c_double(self.params["FieldFreq"]),\
-        ctypes.c_double(self.params["Tau"]), ctypes.c_double(self.params["tOn"]),\
-        ctypes.c_int(self.params["ApplyImpulse"]), ctypes.c_int(self.params["ApplyCw"])
-        )
-        # Bring the field Components
-        n = self.n_ao
-        muxo = np.zeros((n,n)).astype(complex)
-        muyo = np.zeros((n,n)).astype(complex)
-        muzo = np.zeros((n,n)).astype(complex)
-        mu0 = np.zeros(3)
-        libtdscf.InitMu(\
-        muxo.ctypes.data_as(ctypes.c_void_p),\
-        muyo.ctypes.data_as(ctypes.c_void_p),\
-        muzo.ctypes.data_as(ctypes.c_void_p),\
-        mu0.ctypes.data_as(ctypes.c_void_p))
-        self.muxo = muxo.copy()
-        self.muyo = muyo.copy()
-        self.muzo = muzo.copy()
-        self.mu0 = mu0.copy()
-        return
-
     def InitFockBuild(self):
         '''
         Using Roothan's equation to build a Fock matrix and initial density matrix
         Returns:
             self consistent density in Lowdin basis.
         '''
+        start = time.time()
         n_occ = self.n_occ
         Ne = self.n_e = 2.0 * n_occ
         err = 100
         it = 0
         self.H = self.the_scf.get_hcore()
         S = self.S.copy()
-        P = TransMat(self.the_scf.make_rdm1(), self.X)
-        Plao = TransMat(P,self.X,1)
-        self.F = self.FockBuildc(Plao)
-        Plao_old = TransMat(P,self.X,1)
+        SX = np.dot(S,self.X)
+        Plao = 0.5*TransMat(self.the_scf.get_init_guess(self.mol, self.the_scf.init_guess), SX).astype(complex)
+        adiis = self.the_scf.DIIS(self.the_scf, self.the_scf.diis_file)
+        adiis.space = self.the_scf.diis_space
+        adiis.rollback = self.the_scf.diis_space_rollback
+        self.adiis = adiis
+
+        self.F = self.FockBuild(Plao)
+        Plao_old = Plao
         E = self.energy(Plao)+ self.Enuc
+
+        # if (self.params["Model"] == "TDHF"):
         while (err > 10**-10):
             # Diagonalize F in the lowdin basis
             self.eigs, self.V = np.linalg.eig(self.F)
@@ -381,17 +430,15 @@ class tdscf:
             # Fill up the density in the MO basis and then Transform back
             Pmo = 0.5*np.diag(self.the_scf.mo_occ).astype(complex)
             Plao = TransMat(Pmo,self.V,-1)
-            #print "Ne", np.trace(Plao), np.trace(Pmo)
+            print "Ne", np.trace(Plao), np.trace(Pmo)
             Eold = E
-            if self.params["Model"] == "TDHF":
-                self.F = self.FockBuildc(Plao)
-            elif self.params["Model"] == "TDDFT":
-                self.FockDFTbuild(Plao)
             E = self.energy(Plao)
+            self.F = self.FockBuild(Plao,it)
             err = abs(E-Eold)
-            if (it%10 ==0):
+            if (it%1 ==0):
                 print "Iteration:", it,"; Energy:",E,"; Error =",err
             it += 1
+        #print "exc: ",self.the_scf._exc, "; ecoul: ",self.the_scf._ecoul
         Pmo = 0.5*np.diag(self.the_scf.mo_occ).astype(complex)
         Plao = TransMat(Pmo,self.V,-1)
         self.C = np.dot(self.X,self.V)
@@ -400,28 +447,10 @@ class tdscf:
         print "Ne", np.trace(Plao), np.trace(self.rho),
         print "Energy:",E
         print "Initial Fock Matrix(MO)\n", TransMat(self.F,self.V)
+        end = time.time()
+        print "Initial Fock Built time:",end-start
+        #quit()
         return Plao
-
-    def Fockbuildee2(self,P):
-        '''
-        Updates Fock matrix using ee2 Fockbuild routine
-        V_ is empty, F is empty
-        need V
-        Updating F, V_, V, C, eigs
-        make Vprime
-        '''
-        # Rotate all matrix
-        RhoT = self.Rho.T.copy() # Complex
-        V_ = np.zeros((n,n)).astype(complex)
-        VT = self.V.T.copy() # Complex
-        CT = self.C.T.copy() # Complex
-        XT = self.X.T.copy()
-        HT = self.H.T.copy()
-        FT = np.zeros((n,n)).astype(complex)
-        libtdscf.setupFock(RhoT.ctypes.data_as(ctypes.c_void_p),V_.ctypes.data_as(ctypes.c_void_p),VT.ctypes.data_as(ctypes.c_void_p))
-        V_T = V_.T.copy()
-        #cx_mat& Rho, cx_mat& V_, cx_mat& V, cx_mat& C, mat& X, mat& H, cube& BpqR, vec& eigs, int n2, int n_aux
-        return F
 
     def Split_RK4_Step_MMUT(self, w, v , oldrho , time, dt ,IsOn):
         Ud = np.exp(w*(-0.5j)*dt);
@@ -472,7 +501,7 @@ class tdscf:
     def TDDFTstep(self,time):
         #self.rho (MO basis)
         if (self.params["Method"] == "MMUT"):
-            self.F = self.FockBuildc(TransMat(self.rho,self.V,-1)) # is LAO basis
+            self.F = self.FockBuild(TransMat(self.rho,self.V,-1)) # is LAO basis
             self.F = np.conj(self.F)
             Fmo_prev = TransMat(self.F, self.V)
             self.eigs, rot = np.linalg.eig(Fmo_prev)
@@ -503,7 +532,7 @@ class tdscf:
             C = self.C.copy()
             # First perform a fock build
             # MO -> AO requires C
-            self.FockBuildc( TransMat(rho,C, -1) )
+            self.FockBuild( TransMat(rho,C, -1) )
             #Fmo = TransMat(self.F,self.Cinv,-1) # AO -> MO requires Cinv NOT A NORM CONSERVING TRANSFORMATION, HENCE WRONG EIGVALUES.
             Fmo = TransMat(self.F,C)# C will F(AO) to F(MO)
             if (1):
@@ -514,19 +543,19 @@ class tdscf:
             v2 = (0.5 * dt)*k1
             v2 += rho
             #print Fmo
-            self.FockBuildc( TransMat(v2, C, -1) )
+            self.FockBuild( TransMat(v2, C, -1) )
             Fmo = TransMat(self.F,C)
             k2 = self.rhodot(v2, time + 0.5*dt,Fmo)
             v3 = (0.5 * dt)*k2
             v3 += rho
 
-            self.FockBuildc( TransMat(v3, C, -1) )
+            self.FockBuild( TransMat(v3, C, -1) )
             Fmo = TransMat(self.F,C)
             k3 = self.rhodot(v3, time + 0.5*dt,Fmo)
             v4 = (1.0 * dt)*k3
             v4 += rho
 
-            self.FockBuildc( TransMat(v4, C, -1) )
+            self.FockBuild( TransMat(v4, C, -1) )
             Fmo = TransMat(self.F,C)
             k4 = self.rhodot(v4, time + dt,Fmo)
 
@@ -568,13 +597,6 @@ class tdscf:
         return
 
     def dipole(self):
-        # self.rho (MO), self.C (AOxMO)
-        #dipole = [TrDot(self.rho,self.muxo),TrDot(self.rho,self.muyo),TrDot(self.rho,self.muzo)] - self.mu0
-        #quit()
-
-        #print dipole.real
-
-        #return dipole.real
         return self.field.Expectation(self.rho, self.C)
 
     def energy(self,Plao,IfPrint=False):
@@ -587,14 +609,24 @@ class tdscf:
         elif self.params["Model"] == "TDDFT":
             Hlao = TransMat(self.H,self.X)
             P = TransMat(Plao,self.X,-1)
+            #P = 0.5*Plao
             J = self.get_j(2*P)
-            nn, Exc, Vx = self.the_scf._numint.nr_rks(self.mol, self.the_scf.grids, self.the_scf.xc, 2*P.real, 0)
-            Exc -= 0.5 * 0.5 * self.hyb * TrDot(P,self.get_k(2*P))
+            #J = self.the_scf.get_j(self.mol,2 * P.real)
+            Exc = self.Exc #self.nr_rks_energy(self.the_scf._numint,self.mol, self.the_scf.grids, self.the_scf.xc, 2*P, 1)
+            if(self.hyb > 0.01):
+                Exc -= 0.5 * self.hyb * TrDot(P,self.get_k(2*P))
+            # if not using auxmol
+            #Exc -= 0.5 * self.hyb * TrDot(P,self.the_scf.get_k(self.mol,2 * P.real)) # requires real only()
             EH = TrDot(Plao,2*Hlao)
+            #EH = TrDot(P,2*self.H)
             EJ = TrDot(P,J)
             E = EH + EJ + Exc + self.Enuc
+            #print "ONE e",EH.real
+            #print "COLOUM",EJ.real
+            #print "EXC",Exc.real
+            #print "Nuclear", self.Enuc
+            #print "", self.the_scf.energy_nuc()
             return E.real
-
 
 
     def loginstant(self,iter):
@@ -602,10 +634,10 @@ class tdscf:
         time is logged in atomic units.
         """
         np.set_printoptions(precision = 7)
-        tore = str(self.t)+" "+str(self.dipole().real).rstrip(']').lstrip('[]')+ " " +str(self.energy(TransMat(self.rho,self.V,-1),False))+" "+str(np.trace(self.rho))
+        tore = str(self.t)+" "+str(self.dipole().real).rstrip(']').lstrip('[')+ " " +str(self.energy(TransMat(self.rho,self.V,-1),False))+" "+str(np.trace(self.rho))
         #tore = str(self.t)+" "+str(np.sin(0.5*np.ones(3)*self.t)).rstrip(']').lstrip('[]')+ " " +str(self.energyc(TransMat(self.rho,self.C,-1),False)+self.Enuc)
         #print tore
-        if iter%self.params["StatusEvery"] ==0:
+        if iter%self.params["StatusEvery"] ==0 or iter == self.params["MaxIter"]-1:
             print 't:', self.t*FsPerAu, " (Fs)  Energy:",self.energy(TransMat(self.rho,self.V,-1)), " Tr ",(np.trace(self.rho))
             print('Dipole moment(X, Y, Z, au): %8.5f, %8.5f, %8.5f' %(self.dipole().real[0],self.dipole().real[1],self.dipole().real[2]))
         return tore
@@ -621,9 +653,28 @@ class tdscf:
         print "\n\nPropagation Begins"
         while (iter<self.params["MaxIter"]):
             self.step(self.t)
+            #print self.t
             #self.log.append(self.loginstant(iter))
             f.write(self.loginstant(iter)+"\n")
             # Do logging.
             iter = iter + 1
             self.t = self.t + self.params["dt"]
         f.close()
+
+def _dot_ao_ao(mol, ao1, ao2, nao, ngrids, non0tab):
+    '''return numpy.dot(ao1.T, ao2)'''
+    natm = ctypes.c_int(mol._atm.shape[0])
+    nbas = ctypes.c_int(mol.nbas)
+    ao1 = np.asarray(ao1, order='C')
+    ao2 = np.asarray(ao2, order='C')
+    vv = np.empty((nao,nao))
+    libdft.VXCdot_ao_ao(vv.ctypes.data_as(ctypes.c_void_p),
+                        ao1.ctypes.data_as(ctypes.c_void_p),
+                        ao2.ctypes.data_as(ctypes.c_void_p),
+                        ctypes.c_int(nao), ctypes.c_int(ngrids),
+                        ctypes.c_int(BLKSIZE),
+                        non0tab.ctypes.data_as(ctypes.c_void_p),
+                        mol._atm.ctypes.data_as(ctypes.c_void_p), natm,
+                        mol._bas.ctypes.data_as(ctypes.c_void_p), nbas,
+                        mol._env.ctypes.data_as(ctypes.c_void_p))
+    return vv

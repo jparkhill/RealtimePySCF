@@ -28,7 +28,7 @@ def load_library(libname):
         _loaderpath = os.path.dirname(LIBRARYPATH)
         return np.ctypeslib.load_library(libname, _loaderpath)
 
-libtdscf = load_library('../lib/tdscf/libtdscf')
+libtdscf = load_library( os.path.expanduser('~') +'/tdscf_pyscf/lib/tdscf/libtdscf')
 
 class tdscfC:
     """
@@ -132,7 +132,7 @@ class tdscfC:
         self.eri2c = eri2c
 
         RSinv = MatrixPower(eri2c,-0.5)
-        self.B = np.einsum('ijp,pq->ijq', self.eri3c, RSinv) # (AO,AO,n_aux)
+        self.B = np.einsum('ijp,pq->ijq', eri3c, RSinv) # (AO,AO,n_aux)
 
         return
 
@@ -220,9 +220,9 @@ class tdscfC:
         self.X = MatrixPower(S,-1./2.)
         self.H = self.the_scf.get_hcore()
         self.C = self.X.copy() # Initial set of orthogonal coordinates.
-	if(self.params["Model"] == "TDDFT"):
-	    self.InitFockBuildC()
-	elif(self.params["Model"] == "TDCI") and (self.params["Method"] == "CIS"):
+    	if(self.params["Model"] == "TDDFT"):
+    	    self.InitFockBuildC()
+    	elif(self.params["Model"] == "TDCI") and (self.params["Method"] == "CIS"):
             self.InitFockBuildC2()
         elif(self.params["Model"] == "TDCI") and (self.params["Method"] == "CISD"):
             raise Exception("Unknown Method...")
@@ -255,7 +255,7 @@ class tdscfC:
         Transfer H,S,X,B to CPP
         Initialize V matrix and eigs vec in CPP as well
         Make Fockbuild
-        Transfer V
+        Transfer V,C
         '''
         F = np.zeros((self.n_ao,self.n_ao)).astype(complex)
         libtdscf.Initialize(\
