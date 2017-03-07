@@ -5,6 +5,7 @@ import scipy
 import scipy.linalg
 from pyscf import gto, dft, scf, ao2mo
 from tdscf import *
+from tdcis import *
 from tdscfC import *
 from bo import *
 from bohf import *

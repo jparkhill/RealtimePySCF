@@ -25,8 +25,6 @@
 		muyo = 0.5*(muyo+muyo.t());
 		muzo = 0.5*(muzo+muzo.t());
 
-
-
   }
   vec Expectation(const arma::cx_mat& pin, bool Initialize=true)
 	{
@@ -43,7 +41,7 @@
   void InitializeExpectation(const arma::cx_mat& pin)
 	{
 		mu_0=Expectation(pin,false);
-    (mu_0-mu_n).t().print("Initial Dipole (x, y, z):");
+    mu_0.print("Initial Dipole (x, y, z):");
 	}
 
   double ImpulseAmp(double tnow)

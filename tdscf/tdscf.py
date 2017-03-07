@@ -21,7 +21,7 @@ class tdscf:
 
     By default it does
     """
-    def __init__(self,the_scf_,prm=None,output = 'log.dat'):
+    def __init__(self,the_scf_,prm=None,output = 'log.dat', prop_=True):
         """
         Args:
             the_scf an SCF object from pyscf (should probably take advantage of complex RKS already in PYSCF)
@@ -45,8 +45,8 @@ class tdscf:
         self.n_ao = None
         self.n_mo = None
         self.n_occ = None
+        self.n_virt = None
         self.n_e = None
-
         #Global Matrices
         self.rho = None # Current MO basis density matrix. (the idempotent (0,1) kind)
         self.rhoM12 = None # For MMUT step
@@ -59,7 +59,6 @@ class tdscf:
         self.H = None # (ao X ao)  core hamiltonian.
         self.B = None # for ee2
         self.log = []
-
         # Objects
         self.the_scf  = the_scf_
         self.mol = the_scf_.mol
@@ -68,6 +67,7 @@ class tdscf:
         #    self.MyBO = BORKS(...)
         self.auxmol_set()
         self.params = dict()
+        self.auxmol_set()
         self.initialcondition(prm)
         self.field = fields(the_scf_, self.params)
         self.field.InitializeExpectation(self.rho, self.C)
@@ -118,12 +118,8 @@ class tdscf:
         print "ERI2C INTEGRALS GENERATED"
         self.eri3c = eri3c
         self.eri2c = eri2c
-
         RSinv = MatrixPower(eri2c,-0.5)
         self.B = np.einsum('ijp,pq->ijq', self.eri3c, RSinv) # (AO,AO,n_aux)
-        print "RSINV & B GENERATED"
-
-
         return
 
     def FockBuild(self,P,it = -1):
@@ -302,7 +298,6 @@ class tdscf:
         kpj = np.einsum('ijp,jk->ikp', self.eri3c, P)
         pik = np.linalg.solve(self.eri2c, kpj.reshape(-1,naux).T.conj())
         rkmat = np.einsum('pik,kjp->ij', pik.reshape(naux,nao,nao), self.eri3c)
-        #print "kmat\n",rkmat
         return rkmat
 
     def initialcondition(self,prm):
@@ -320,6 +315,7 @@ class tdscf:
         n_ao = self.n_ao = self.the_scf.make_rdm1().shape[0]
         n_mo = self.n_mo = n_ao # should be fixed.
         n_occ = self.n_occ = int(sum(self.the_scf.mo_occ)/2)
+        self.n_virt = self.n_mo - self.n_occ
         print "n_ao:", n_ao, "n_mo:", n_mo, "n_occ:", n_occ
         self.ReadParams(prm)
         self.InitializeLiouvillian()
@@ -327,13 +323,12 @@ class tdscf:
 
     def ReadParams(self,prm):
         '''
-        Read the file and fill the params dictionary
+        Set Defaults, Read the file and fill the params dictionary
         '''
-
-
-
         self.params["Model"] = "TDDFT" #"TDHF"; the difference of Fock matrix and energy
         self.params["Method"] = "MMUT"#"MMUT"
+        self.params["BBGKY"]=0
+        self.params["TDCIS"]=1
 
         self.params["dt"] =  0.02
         self.params["MaxIter"] = 15000
@@ -349,6 +344,7 @@ class tdscf:
         self.params["ApplyCw"] = 0
 
         self.params["StatusEvery"] = 5000
+        self.params["Print"]=0
         # Here they should be read from disk.
         if(prm != None):
             for line in prm.splitlines():
@@ -524,7 +520,6 @@ class tdscf:
             NewRho = self.Split_RK4_Step_MMUT(w, v, NewRhoM12, time,self.params["dt"]/2.0, IsOn)
             self.rho = 0.5*(NewRho+(NewRho.T.conj()));
             self.rhoM12 = 0.5*(NewRhoM12+(NewRhoM12.T.conj()))
-
         elif (self.params["Method"] == "RK4"):
             raise Exception("Broken.")
             dt = self.params["dt"]
@@ -571,11 +566,9 @@ class tdscf:
         return
 
     def EE2step(self,time):
-
         if (self.params["Method"] == "MMUT"):
             libtdscf.MMUT_step(self.rho.ctypes.data_as(ctypes.c_void_p), self.rhoM12.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(time))
             # Rho and RhoM12 is updated
-
         elif (self.params["Method"] == "RK4"):
             #
             newrho = self.rho.copy()
@@ -603,7 +596,7 @@ class tdscf:
         """
         P: Density in LAO basis.
         """
-        if self.params["Model"] == "TDHF":
+        if (self.params["Model"] == "TDHF" or self.params["Model"] == "BBGKY"):
             Hlao = TransMat(self.H,self.X)
             return (self.Enuc+np.trace(np.dot(Plao,Hlao+self.F))).real
         elif self.params["Model"] == "TDDFT":
@@ -628,13 +621,13 @@ class tdscf:
             #print "", self.the_scf.energy_nuc()
             return E.real
 
-
     def loginstant(self,iter):
         """
         time is logged in atomic units.
         """
         np.set_printoptions(precision = 7)
         tore = str(self.t)+" "+str(self.dipole().real).rstrip(']').lstrip('[')+ " " +str(self.energy(TransMat(self.rho,self.V,-1),False))+" "+str(np.trace(self.rho))
+
         #tore = str(self.t)+" "+str(np.sin(0.5*np.ones(3)*self.t)).rstrip(']').lstrip('[]')+ " " +str(self.energyc(TransMat(self.rho,self.C,-1),False)+self.Enuc)
         #print tore
         if iter%self.params["StatusEvery"] ==0 or iter == self.params["MaxIter"]-1:

@@ -60,7 +60,7 @@ double thresh = pow(10.0,-11.0);
     void TDTDA_step(cx *r, double tnow);
     void tdtda(cx_mat& Rho_, cx_mat& RhoDot_, const double time, cx_mat& hmu);
 
-
+    void Call(cx* v, cx* c);
     bool cx_mat_equals(const arma::cx_mat& X,const arma::cx_mat& Y);
 		bool delta(int p,int q);
 

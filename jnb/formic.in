@@ -1,0 +1,33 @@
+$molecule
+0 1
+O          1.45700       -0.06080        0.51300
+C          1.92776        0.24064       -0.56750
+O          3.25265        0.29382       -0.77255
+H          1.36836        0.49797       -1.47872
+H          3.68026        0.85182        0.22298
+$end
+
+$rem
+SCF_GUESS core
+GEN_SCFMAN true 
+Basis sto-3g
+AUX_BASIS rimp2-cc-pvdz 
+PURECART 1111
+xc_grid 1
+RTTDDFT 1
+TDCI 0
+RTISO 0
+EXCHANGE HF
+SYMMETRY OFF
+SYM_IGNORE TRUE
+SCF_ALGORITHM DIIS
+UNRESTRICTED FALSE
+GHF FALSE
+COMPLEX FALSE
+SCF_GUESS_MIX 0
+SCF_FINAL_PRINT TRUE
+COMPLEX_MIX 0
+GEN_CIS_ITER 200 
+MAX_SCF_CYCLES 200
+$end
+

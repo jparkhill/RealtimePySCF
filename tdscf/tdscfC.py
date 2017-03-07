@@ -279,9 +279,10 @@ class tdscfC:
         F = np.zeros((self.n_ao,self.n_ao)).astype(complex)
         libtdscf.Initialize2(\
         self.H.ctypes.data_as(ctypes.c_void_p),self.S.ctypes.data_as(ctypes.c_void_p),\
-        self.X.ctypes.data_as(ctypes.c_void_p),self.B.ctypes.data_as(ctypes.c_void_p),F.ctypes.data_as(ctypes.c_void_p),\
-        ctypes.c_int(self.n_ao),ctypes.c_int(self.n_aux),ctypes.c_int(self.n_occ),\
-        ctypes.c_double(self.Enuc), ctypes.c_double(self.params["dt"]))
+        self.X.ctypes.data_as(ctypes.c_void_p),self.B.ctypes.data_as(ctypes.c_void_p),\
+	    F.ctypes.data_as(ctypes.c_void_p),ctypes.c_int(self.n_ao),\
+	    ctypes.c_int(self.n_aux),ctypes.c_int(self.n_occ),\
+	    ctypes.c_double(self.params["dt"]))
 
         V = np.zeros((self.n_ao, self.n_ao)).astype(complex)
         C = np.zeros((self.n_ao, self.n_ao)).astype(complex)
