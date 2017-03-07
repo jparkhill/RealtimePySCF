@@ -136,17 +136,20 @@ class tdcis(tdscf.tdscf):
         tmp=np.dot((J+K),Rho_) - np.dot(Rho_,(J+K)) # h + this is the fock part.
         RhoDot_ = tmp;
 
-        # Eliminate OV-VO couplings.
-        if 0:
-            J = -2.j*np.einsum("bija,ai->bj",self.Vi,Rho0)
-            K = 1.j*np.einsum("biaj,ai->bj",self.Vi,Rho0)
-            tmp=(J+K)*Rho_ - Rho_*(J+K); # h + this is the fock part.
-            RhoDot_ += tmp;
-
-            J = -2.j*np.einsum("bija,ai->bj",self.Vi,Rho0)
-            K = 1.j*np.einsum("biaj,ai->bj",self.Vi,Rho0)
-            tmp=(J+K)*Rho_ - Rho_*(J+K); # h + this is the fock part.
-            RhoDot_ += tmp;
+        # OV-> OV and OO and VV
+        J = -2.j*np.einsum("bija,ai->bj",self.Vi[:,self.n_occ:,:,:self.n_occ],Rho_[:self.n_occ,self.n_occ:])
+        K = 1.j*np.einsum("biaj,ai->bj",self.Vi[:,self.n_occ:,:self.n_occ,:],Rho_[:self.n_occ,self.n_occ:])
+        Feff = (J+K)
+        Feff[self.n_occ:,:self.n_occ] *= 0.0
+        tmp=np.dot((J+K),self.rho0) - np.dot(self.rho0,(J+K)) # h + this is the fock part.
+        RhoDot_ += tmp;
+        # VO ->
+        J = -2.j*np.einsum("bija,ai->bj",self.Vi[:,:self.n_occ,:,self.n_occ:],Rho_[self.n_occ:,:self.n_occ])
+        K = 1.j*np.einsum("biaj,ai->bj",self.Vi[:,:self.n_occ,self.n_occ:,:],Rho_[self.n_occ:,:self.n_occ])
+        Feff = (J+K)
+        Feff[:self.n_occ,self.n_occ:] *= 0.0
+        tmp=np.dot((J+K),self.rho0) - np.dot(self.rho0,(J+K)) # h + this is the fock part.
+        RhoDot_ += tmp;
         return RhoDot_
 
     def BBGKYstep(self,time):
