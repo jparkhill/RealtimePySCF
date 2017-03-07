@@ -436,8 +436,8 @@ class BORHF():
                 #Ktilde = self.get_k(Pt,int(2))
                 #self.Ktilde[:nA,:nA] = Ktilde[:nA,:nA].copy()
 
-                Ktilde = self.get_k(PtA,int(0))
-                #Ktilde = self.get_k_c(PtA,int(0))
+                #Ktilde = self.get_k(PtA,int(0))
+                Ktilde = self.get_k_c(PtA,int(0))
                 self.Ktilde[:nA,:nA] = Ktilde
 
 
@@ -598,6 +598,17 @@ class BORHF():
         else:
             print "Did not specify the Block"
         return jmat
+
+    def get_j_c(self, P, mol = 3):
+        if mol == 2:
+            Pc = np.asarray(P, order='C').astype(complex)
+            Jmat = np.zeros((self.n,self.n))
+            #Kmat = np.asarray(Kmat,order = 'C')
+            libtdscf.get_k0(\
+            Pc.ctypes.data_as(ctypes.c_void_p), Jmat.ctypes.data_as(ctypes.c_void_p))
+            # print Kmat
+            # quit()
+        return Jmat
 
     def get_k_c(self, P, mol = 3):
         if mol == 0:

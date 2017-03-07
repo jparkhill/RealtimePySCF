@@ -1,6 +1,7 @@
 #include <iostream>
 #include <iomanip>
 #include <armadillo>
+#include <omp.h>
 using namespace arma;
 #include "tdscf.h"
 #include "field.h"
