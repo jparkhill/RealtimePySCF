@@ -8,8 +8,6 @@ from cmath import *
 from pyscf import lib
 import ctypes
 
-
-libtdscf = load_library( os.path.expanduser('~') +'/tdscf_pyscf/lib/tdscf/libtdscf')
 libdft = lib.load_library('libdft')
 
 FsPerAu = 0.0241888
@@ -472,8 +470,6 @@ class tdscf:
         newrho = U*newrho*U.t();
         """
         newrho = TransMat(RhoHalfStepped,U,-1)
-#        print U.dot(U.T.conj())
-#        print newrho
         return newrho
 
     def rhodot(self,rho,time,F):
@@ -565,18 +561,6 @@ class tdscf:
             raise Exception("Unknown Method...")
         return
 
-    def EE2step(self,time):
-        if (self.params["Method"] == "MMUT"):
-            libtdscf.MMUT_step(self.rho.ctypes.data_as(ctypes.c_void_p), self.rhoM12.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(time))
-            # Rho and RhoM12 is updated
-        elif (self.params["Method"] == "RK4"):
-            #
-            newrho = self.rho.copy()
-            libtdscf.TDTDAstep(newrho.ctypes.data_as(ctypes.c_void_p), ctypes.c_double(time))
-            self.rho = newrho.copy()
-            #print self.rho
-        #quit()
-        return
 
     def step(self,time):
         """

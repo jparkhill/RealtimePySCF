@@ -31,7 +31,6 @@ def load_library(libname):
         _loaderpath = os.path.dirname(__file__)
         return np.ctypeslib.load_library(libname, _loaderpath)
 
-libtdscf = load_library( os.path.expanduser('~') +'/tdscf_pyscf/lib/tdscf/libtdscf')
 libdft = lib.load_library('libdft')
 libcvhf = lib.load_library('libcvhf')
 def eval_rhoc(mol, ao, mo_coeff, mo_occ, non0tab=None, xctype='LDA',
@@ -139,43 +138,9 @@ def eval_rhoc(mol, ao, mo_coeff, mo_occ, non0tab=None, xctype='LDA',
             # c1 = _dot_ao_dm(mol, ao2.imag, cneg.imag, nao, ngrids, non0tab)
             rho[4] -= np.einsum('pi,pi->p', c0, c1.conj()) * 2
             rho[4] -= rho5 * 2
-
             rho[5] -= rho5 * .5
     return rho.real
 
-def c_dot_product(A,B):
-    '''
-    using ARMA
-    return A*B; assuming A and B are complex (or force it to be complex)
-    '''
-    na, nb = A.shape
-    nc = B.shape[1]
-    a = np.asarray(A, order='C').astype(complex)
-    b = np.asarray(B, order='C').astype(complex)
-    c = np.zeros((na,nc)).astype(complex)
-
-
-    libtdscf.i_dot_product(
-    a.ctypes.data_as(ctypes.c_void_p),b.ctypes.data_as(ctypes.c_void_p),c.ctypes.data_as(ctypes.c_void_p),\
-    ctypes.c_int(na),ctypes.c_int(nb),ctypes.c_int(nc))
-    return c
-
-def r_dot_product(A,B):
-    '''
-    using ARMA
-    return A*B; assuming A and B are complex
-    '''
-    na, nb = A.shape
-    nc = B.shape[1]
-    a = np.asarray(A, order='C').astype(float)
-    b = np.asarray(B, order='C').astype(float)
-    c = np.zeros((na,nc)).astype(float)
-
-
-    libtdscf.r_dot_product(
-    a.ctypes.data_as(ctypes.c_void_p),b.ctypes.data_as(ctypes.c_void_p),c.ctypes.data_as(ctypes.c_void_p),\
-    ctypes.c_int(na),ctypes.c_int(nb),ctypes.c_int(nc))
-    return c
 
 def TransMat(M,U,inv = 1):
     if inv == 1:
