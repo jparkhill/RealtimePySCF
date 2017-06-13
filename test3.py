@@ -1,5 +1,5 @@
 import numpy as np
-from tdscf import tdscf
+from tdscf.tdscf import tdscf
 import sys, re
 import pyscf
 import pyscf.dft

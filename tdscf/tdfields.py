@@ -116,7 +116,7 @@ class fields:
                 return e_dip
         else:
             mol_dip = np.einsum('xij,ji->x', self.dip_ints, rhoAO)
-            if (self.pol0 != None):
+            if (self.pol0 is not None):
                 return mol_dip - self.pol0#2.0*np.einsum("ij,jik->k",rhoMO,muMO) - self.pol0
             else:
                 return mol_dip#2.0*np.einsum("ij,jik->k",rhoMO,muMO)
