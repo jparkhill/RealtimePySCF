@@ -1,5 +1,5 @@
 import numpy as np
-from tdscf import tdscf
+from tdscf.tdscf import tdscf
 import sys, re
 import pyscf
 import pyscf.dft
@@ -39,7 +39,7 @@ def TestBBGKY():
     mol.build()
     the_scf = pyscf.dft.RKS(mol)
     the_scf.xc='HF'
-    print "Inital SCF finished. E=", the_scf.kernel()
+    print "Initial SCF finished. E=", the_scf.kernel()
     aprop = tdcis(the_scf,prm,output)
     return
 
@@ -76,7 +76,7 @@ def TestTDCIS():
     mol.build()
     the_scf = pyscf.dft.RKS(mol)
     the_scf.xc='HF'
-    print "Inital SCF finished. E=", the_scf.kernel()
+    print "Initial SCF finished. E=", the_scf.kernel()
     aprop = tdcis(the_scf,prm,output)
     return
 
@@ -111,7 +111,7 @@ def TestTDHF():
     mol.build()
     the_scf = pyscf.dft.RKS(mol)
     the_scf.xc='HF'
-    print "Inital SCF finished. E=", the_scf.kernel()
+    print "Initial SCF finished. E=", the_scf.kernel()
     aprop = tdscf(the_scf,prm,output)
     return
 
@@ -146,7 +146,7 @@ def TestTDDFT():
     mol.build()
     the_scf = pyscf.dft.RKS(mol)
     the_scf.xc='PBE'
-    print "Inital SCF finished. E=", the_scf.kernel()
+    print "Initial SCF finished. E=", the_scf.kernel()
     aprop = tdscf(the_scf,prm,output)
     return
 
@@ -183,7 +183,7 @@ def TestProfileTDDFT():
     mol.build()
     the_scf = pyscf.dft.RKS(mol)
     the_scf.xc='PBE'
-    print "Inital SCF finished. E=", the_scf.kernel()
+    print "Initial SCF finished. E=", the_scf.kernel()
     pr.enable()
     aprop = tdscf(the_scf,prm,output)
     pr.disable()
@@ -195,7 +195,7 @@ def TestProfileTDDFT():
 
 
 #TestProfileTDDFT()
-#TestTDDFT()
+TestTDDFT()
 #TestTDCIS()
 #TestTDHF()
-TestBBGKY()
+#TestBBGKY()

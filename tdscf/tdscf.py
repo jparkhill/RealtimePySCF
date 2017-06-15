@@ -1,3 +1,4 @@
+import tensorflow as tf
 import numpy as np
 import scipy, os, time
 import scipy.linalg
@@ -9,6 +10,7 @@ from pyscf import lib
 import ctypes
 
 libdft = lib.load_library('libdft')
+sess = tf.Session()
 
 FsPerAu = 0.0241888
 
@@ -19,6 +21,13 @@ class tdscf:
 
     By default it does
     """
+    def toTF(self,arg):
+	#if np.iscomplexobj(arg) == True:
+	#	arg = tf.convert_to_tensor(arg, dtype=tf.complex64)
+	#else:
+        arg = tf.convert_to_tensor(arg, dtype=tf.float64)
+        return arg
+
     def __init__(self,the_scf_,prm=None,output = 'log.dat', prop_=True):
         """
         Args:
@@ -117,7 +126,8 @@ class tdscf:
         self.eri3c = eri3c
         self.eri2c = eri2c
         RSinv = MatrixPower(eri2c,-0.5)
-        self.B = np.einsum('ijp,pq->ijq', self.eri3c, RSinv) # (AO,AO,n_aux)
+	with sess.as_default():
+		self.B = tf.einsum('ijp,pq->ijq', self.toTF(eri3c), self.toTF(RSinv)).eval() #self.B = np.einsum('ijp,pq->ijq', self.eri3c, RSinv) # (AO,AO,n_aux)
         return
 
     def FockBuild(self,P,it = -1):
@@ -181,8 +191,11 @@ class tdscf:
                 vrho = vxc[0]
                 den = rho * weight
                 excsum[0] += (den * exc).sum()
-                aow = np.einsum('pi,p->pi', ao, .5*weight*vrho)
-                vmat += r_dot_product(ao.T,aow)#_dot_ao_ao(self.mol, ao, aow, nao, weight.size, mask)#r_dot_product(ao[0].T,aow)
+		aow = np.einsum('pi,p->pi', ao, .5*weight*vrho)
+		vmat += np.einsum('ij,jk->ik',ao.T,aow)# r_dot_product(ao.T,aow)#_dot_ao_ao(self.mol, ao, aow, nao, weight.size, mask)#r_dot_product(ao[0].T,aow)
+		#with sess.as_default():
+			#aow = tf.einsum('pi,p->pi', self.toTF(ao), self.toTF(.5*weight*vrho)).eval()
+			#vmat = tf.einsum('ij,ij->ik', self.toTF(ao.T), self.toTF(aow)).eval() 
                 rho = exc = vxc = vrho = aow = None
         elif xctype == 'GGA':
             ao_deriv = 1
@@ -194,8 +207,11 @@ class tdscf:
                 wv = np.empty((4,ngrid))#.astype(complex)
                 wv[0]  = weight * vrho * .5
                 wv[1:] = rho[1:] * (weight * vsigma * 2)
-                aow = np.einsum('npi,np->pi', ao, wv)
-                vmat += r_dot_product(ao[0].T,aow) #_dot_ao_ao(self.mol, ao[0], aow, nao, ngrid, mask)#r_dot_product(ao[0].T,aow) #np.einsum('ij,jk->ik',ao[0].T,aow) #_dot_ao_ao(self.mol, ao[0], aow, nao, ngrid, mask)
+		aow = np.einsum('npi,np->pi', ao, wv)
+		vmat += np.einsum('ij,jk->ik',ao[0].T,aow) #_dot_ao_ao(self.mol, ao[0], aow, nao, ngrid, mask)
+		#with sess.as_default():
+			#aow = tf.einsum('npi,np->pi', self.toTF(ao), self.toTF(wv)).eval()
+			#vmat += tf.einsum('ij,jk->ik',self.toTF(ao[0].T),self.toTF(aow)).eval()
                 den = rho[0] * weight
                 excsum[0] += (den * exc).sum()
                 # print weight.shape
@@ -224,7 +240,9 @@ class tdscf:
                 wv = np.empty((4,ngrid))
                 wv[0]  = weight * vrho * .5
                 wv[1:] = rho[1:4] * (weight * vsigma * 2)
-                aow = np.einsum('npi,np->pi', ao[:4], wv)
+		aow = np.einsum('npi,np->pi', ao[:4], wv)
+		#with sess.as_default():
+			#aow = tf.einsum('npi,np->pi', self.toTF(ao[:4]),self.toTF(wv)).eval()
                 vmat += _dot_ao_ao(mol, ao[0], aow, nao, ngrid, mask)
                 wv = (.5 * .5 * weight * vtau).reshape(-1,1)
                 vmat += _dot_ao_ao(mol, ao[1], wv*ao[1], nao, ngrid, mask)#r_dot_product(ao[1].T,wv*ao[1])
@@ -278,9 +296,11 @@ class tdscf:
         '''
         naux = self.n_aux
         nao = self.n_ao
+	#rho = tf.einsum('ijp,ij->p', self.toTF(self.eri3c),self.toTF(P)).eval()
         rho = np.einsum('ijp,ij->p', self.eri3c, P)
         rho = np.linalg.solve(self.eri2c, rho)
-        jmat = np.einsum('p,ijp->ij', rho, self.eri3c)
+        #jmat = tf.einsum('p,ijp->ij', self.toTF(rho), self.toTF(self.eri3c)).eval()
+	jmat = np.einsum('p,ijp->ij',rho, self.eri3c)
         #print "jmat\n",jmat
         return jmat
 
@@ -293,9 +313,13 @@ class tdscf:
         '''
         naux = self.n_aux
         nao = self.n_ao
-        kpj = np.einsum('ijp,jk->ikp', self.eri3c, P)
+	kpj = np.einsum('ijp,jk->ikp', self.eri3c, P)
         pik = np.linalg.solve(self.eri2c, kpj.reshape(-1,naux).T.conj())
-        rkmat = np.einsum('pik,kjp->ij', pik.reshape(naux,nao,nao), self.eri3c)
+	rkmat = np.einsum('pik,kjp->ij', pik.reshape(naux,nao,nao), self.eri3c)
+	#with sess.as_default():
+        	#kpj = tf.einsum('ijp,jk->ikp', self.toTF(self.eri3c), self.toTF(P)).eval()
+       		#pik = np.linalg.solve(self.eri2c, kpj.reshape(-1,naux).T.conj())
+        	#rkmat = tf.einsum('pik,kjp->ij', self.toTF(pik.reshape(naux,nao,nao)), self.toTF(self.eri3c)).eval()
         return rkmat
 
     def initialcondition(self,prm):
@@ -637,6 +661,7 @@ class tdscf:
             iter = iter + 1
             self.t = self.t + self.params["dt"]
         f.close()
+	sess.close()
 
 def _dot_ao_ao(mol, ao1, ao2, nao, ngrids, non0tab):
     '''return numpy.dot(ao1.T, ao2)'''
