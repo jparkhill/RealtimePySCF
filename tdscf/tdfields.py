@@ -80,7 +80,7 @@ class fields:
         else:
             return a_mat, False
 
-    def ApplyField(self, a_mat, c_mat, time):
+    def ApplyField(self, a_mat, c_mat, time, par = None):
         """
         Args:
             a_mat: an MO matrix to which the field is added.

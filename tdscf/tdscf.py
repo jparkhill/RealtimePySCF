@@ -36,7 +36,8 @@ class tdscf:
             Nothing.
         """
         #To be Sorted later
-        self.Enuc = the_scf_.energy_nuc()#the_scf_.e_tot - dft.rks.energy_elec(the_scf_,the_scf_.make_rdm1())[0]
+        self.Enuc = the_scf_.mol.energy_nuc()
+        #the_scf_.e_tot - dft.rks.energy_elec(the_scf_,the_scf_.make_rdm1())[0]
         self.eri3c = None
         self.eri2c = None
         self.n_aux = None
@@ -58,6 +59,8 @@ class tdscf:
         self.rho = None # Current MO basis density matrix. (the idempotent (0,1) kind)
         self.rhoM12 = None # For MMUT step
         self.F = None # (LAO x LAO)
+        self.K = None
+        self.J = None
         self.eigs = None # current fock eigenvalues.
         self.S = None # (ao X ao)
         self.C = None # (ao X mo)
@@ -70,8 +73,6 @@ class tdscf:
         self.the_scf  = the_scf_
         self.mol = the_scf_.mol
         self.MyBO = None
-        #if (params["Model"]=="TDHF_BO"):
-        #    self.MyBO = BORKS(...)
         self.auxmol_set()
         self.params = dict()
         self.auxmol_set()
@@ -245,9 +246,9 @@ class tdscf:
 			#aow = tf.einsum('npi,np->pi', self.toTF(ao[:4]),self.toTF(wv)).eval()
                 vmat += _dot_ao_ao(mol, ao[0], aow, nao, ngrid, mask)
                 wv = (.5 * .5 * weight * vtau).reshape(-1,1)
-                vmat += _dot_ao_ao(mol, ao[1], wv*ao[1], nao, ngrid, mask)#r_dot_product(ao[1].T,wv*ao[1])
-                vmat += _dot_ao_ao(mol, ao[2], wv*ao[2], nao, ngrid, mask)
-                vmat += _dot_ao_ao(mol, ao[3], wv*ao[3], nao, ngrid, mask)
+                vmat += func._dot_ao_ao(mol, ao[1], wv*ao[1], nao, ngrid, mask)#r_dot_product(ao[1].T,wv*ao[1])
+                vmat += func._dot_ao_ao(mol, ao[2], wv*ao[2], nao, ngrid, mask)
+                vmat += func._dot_ao_ao(mol, ao[3], wv*ao[3], nao, ngrid, mask)
                 rho = exc = vxc = vrho = vsigma = wv = aow = None
         self.Exc = excsum[0]
 
@@ -436,6 +437,9 @@ class tdscf:
 
         self.F = self.FockBuild(Plao)
         Plao_old = Plao
+        print "Enuc", self.Enuc
+        print "self.energy(Plao)", self.energy(Plao)
+	print "Plao", Plao
         E = self.energy(Plao)+ self.Enuc
 
         # if (self.params["Model"] == "TDHF"):
@@ -494,7 +498,76 @@ class tdscf:
         newrho = U*newrho*U.t();
         """
         newrho = TransMat(RhoHalfStepped,U,-1)
+#        print U.dot(U.T.conj())
+#        print newrho
         return newrho
+
+
+    def Posify(self, rho):
+
+        n = self.n_ao
+        rhob = np.eye(n).astype(complex)
+        nocc = self.n_occ
+        rhob[nocc:,nocc:] *= 0.0
+        rho -= rhob
+        rho = 0.5 * (rho + rho.T.conj())
+        if (abs(np.trace(rho)) < pow(10.0,-13.0)):
+            rho += rhob
+        else:
+            eig, eigv = np.linalg.eigh(rho)
+            ne = 0.0
+            nh = 0.0
+            IsHole = np.zeros(n)
+            IsE = np.zeros(n)
+            # print eig
+            for i in range(n):
+                if abs(eig[i] > 1.0):
+                    eig[i] = ((0 < eig[i]) - (eig[i] < 0))*1.0
+                if eig[i] < 0.0:
+                    IsHole[i] = 1.0
+                    nh += eig[i]
+                else:
+                    IsE[i] = 1.0
+                    ne += eig[i]
+            if (abs(sum(eig*IsHole)) < abs(sum(eig*IsE))):
+                if ( abs(sum(eig*IsE)) != 0.0):
+                    IsE *= abs(sum(eig*IsHole))/abs(sum(eig*IsE))
+                    eig = (eig*(IsE+IsHole))
+            else:
+                if ( abs(sum(eig*IsHole)) != 0.0):
+                    IsHole *= abs(sum(eig*IsE))/abs(sum(eig*IsHole))
+                    eig = (eig*(IsE+IsHole))
+            rho = TransMat(np.diag(eig),eigv,-1)+rhob
+        if self.params["Stablize"] > 1.0:
+            print "AAAA"
+            eig, eigv = np.linalg.eigh(rho)
+            for i in range(n):
+                if eig[i] < 0.0:
+                    eig[i] *= 0.0
+                elif eig[i]>1.0:
+                    eig[i] *= 1.0
+            missing = nocc - sum(eig)
+            if (abs(missing) < pow(10.0,-10.0)):
+                return
+            if n - nocc - 1 < 0:
+                rho = TransMat(np.diag(eig),eigv,-1)
+                return
+
+            if (missing < 0.0 and eig(n-nocc-1)+missing > 0.0):
+                eig[n-nocc-1] += missing
+            elif (missing < 0.0):
+                eig[n-nocc] += missing
+            elif (missing > 0.0 and eig(n-nocc)+missing < 1.0):
+                eig[n-nocc] += missing
+            else:
+                eig[n-nocc-1] += missing
+            missing = nocc - sum(eig)
+            rho = TransMat(np.diag(eig),eigv,-1)
+            for i in range(n):
+                if (rho(i,i).real < 0.0):
+                    rho[i,i] *= 0.0
+        self.rho = rho.copy()
+        return
 
     def rhodot(self,rho,time,F):
         '''
@@ -508,7 +581,7 @@ class tdscf:
         raise Exception("Not fixed")
         print "F",F
         print "Rho", rho
-        Ft, IsOn = self.field.ApplyField(F,self.C, time)
+        Ft, IsOn = self.field.ApplyField(F,self.C, time,self)
         tmp = -1.j*(np.dot(Ft,rho) - np.dot(rho,Ft))
         print "Ft",Ft
         print "tmp[0,1]", tmp[0,1], tmp[1,0], tmp[0,1]/rho[0,1]
@@ -533,7 +606,7 @@ class tdscf:
             #Fmo = TransMat(self.F,self.V)
             # Check that the energy is still correct.
             Hmo = TransMat(self.H,self.C)
-            FmoPlusField, IsOn = self.field.ApplyField(Fmo,self.C,time)
+            FmoPlusField, IsOn = self.field.ApplyField(Fmo,self.C,time,self)
             #print "Fmo + FIeld\n",FmoPlusField
             w,v = scipy.linalg.eig(FmoPlusField)
             NewRhoM12 = self.Split_RK4_Step_MMUT(w, v, self.rhoM12, time, self.params["dt"], IsOn)
@@ -595,6 +668,8 @@ class tdscf:
             return self.TDDFTstep(time)
         elif(self.params["Model"] == "EE2"):
             return self.EE2step(time)
+        elif(self.params["Model"] == "Corr"):
+            return self.stepEE2(time)
         return
 
     def dipole(self):
@@ -615,7 +690,7 @@ class tdscf:
             #J = self.the_scf.get_j(self.mol,2 * P.real)
             Exc = self.Exc #self.nr_rks_energy(self.the_scf._numint,self.mol, self.the_scf.grids, self.the_scf.xc, 2*P, 1)
             if(self.hyb > 0.01):
-                Exc -= 0.5 * self.hyb * TrDot(P,self.get_k(2*P))
+                Exc -= 0.5 * self.hyb * TrDot(P,self.K)
             # if not using auxmol
             #Exc -= 0.5 * self.hyb * TrDot(P,self.the_scf.get_k(self.mol,2 * P.real)) # requires real only()
             EH = TrDot(Plao,2*Hlao)
@@ -634,7 +709,10 @@ class tdscf:
         time is logged in atomic units.
         """
         np.set_printoptions(precision = 7)
-        tore = str(self.t)+" "+str(self.dipole().real).rstrip(']').lstrip('[')+ " " +str(self.energy(TransMat(self.rho,self.V,-1),False))+" "+str(np.trace(self.rho))
+        if (self.params["ApplyCw"] == 1):
+            tore = str(self.t)+" "+ str(np.diag(self.rho).real).rstrip(']').lstrip('[')
+        else:
+            tore = str(self.t)+" "+str(self.dipole().real).rstrip(']').lstrip('[')+ " " +str(self.energy(TransMat(self.rho,self.V,-1),False))+" "+str(np.trace(self.rho))
 
         #tore = str(self.t)+" "+str(np.sin(0.5*np.ones(3)*self.t)).rstrip(']').lstrip('[]')+ " " +str(self.energyc(TransMat(self.rho,self.C,-1),False)+self.Enuc)
         #print tore
@@ -643,40 +721,71 @@ class tdscf:
             print('Dipole moment(X, Y, Z, au): %8.5f, %8.5f, %8.5f' %(self.dipole().real[0],self.dipole().real[1],self.dipole().real[2]))
         return tore
 
+
+
+    def WriteEH(self, iter = 1):
+        rhoAO = 2.0*TransMat(TransMat(self.rho,self.V,-1),self.X,-1)
+        print "Trace(rhoAO*S):", TrDot(rhoAO,self.S)
+        print "Trace(rhoAO0*S):", TrDot(self.rhoAO0,self.S)
+        rhoAO -= self.rhoAO0
+
+        print "Difference Trace(rhoAO*S):", TrDot(rhoAO,self.S)
+        eig, eigv = np.linalg.eigh(np.dot(rhoAO,self.S).real)
+        print "Diff Nocc:",eig
+        nao = int(self.n_ao)
+        for i in range(nao):
+            for j in range(nao):
+                if (np.isfinite(eigv[i,j]) == False):
+                    eigv[i,j] *= 0.0
+
+        eigv = eigv.T
+        ho = np.zeros(nao)
+        hc = np.zeros((nao,nao), dtype=np.float)
+        eo = np.zeros(nao)
+        ec = np.zeros((nao,nao))
+        for i in range(nao):
+            if eig[i] < 0.0:
+                ho[i] = -1.*eig[i].real
+                hc[i,:] += eigv[i,:].real
+            else:
+                eo[i] = eig[i].real
+                ec[i,:] += eigv[i,:].real
+
+        print "hole:", sum(ho), "electron:", sum(eo)
+        import pyscf.tools
+        hole = open("hole.molden","w")
+        electron = open("electron.molden","w")
+        hc = hc.T
+        pyscf.tools.molden.from_mo(self.mol, hole.name, hc, "Alpha", None, None, ho)
+        ec = ec.T
+        pyscf.tools.molden.from_mo(self.mol, electron.name, ec, "Alpha", None, None, eo)
+        hole.close()
+        electron.close()
+
     def prop(self,output):
         """
         The main tdscf propagation loop.
         """
+        self.rhoAO0 = 2.0*TransMat(TransMat(self.rho,self.V,-1),self.X,-1)
+        EH = 0
         iter = 0
         self.t = 0
         f = open(output,'a')
         print "Energy Gap (eV)",abs(self.eigs[self.n_occ]-self.eigs[self.n_occ-1])*27.2114
         print "\n\nPropagation Begins"
+        start = time.time()
         while (iter<self.params["MaxIter"]):
+            if self.t > 2 * self.params["tOn"] and EH == 0:
+                self.WriteEH()
+                EH = 1
             self.step(self.t)
             #print self.t
             #self.log.append(self.loginstant(iter))
             f.write(self.loginstant(iter)+"\n")
             # Do logging.
-            iter = iter + 1
             self.t = self.t + self.params["dt"]
+            if iter%self.params["StatusEvery"] ==0 or iter == self.params["MaxIter"]-1:
+                end = time.time()
+                print (end - start)/(60*60*self.t * FsPerAu * 0.001), "hr/ps"
+            iter = iter + 1
         f.close()
-	sess.close()
-
-def _dot_ao_ao(mol, ao1, ao2, nao, ngrids, non0tab):
-    '''return numpy.dot(ao1.T, ao2)'''
-    natm = ctypes.c_int(mol._atm.shape[0])
-    nbas = ctypes.c_int(mol.nbas)
-    ao1 = np.asarray(ao1, order='C')
-    ao2 = np.asarray(ao2, order='C')
-    vv = np.empty((nao,nao))
-    libdft.VXCdot_ao_ao(vv.ctypes.data_as(ctypes.c_void_p),
-                        ao1.ctypes.data_as(ctypes.c_void_p),
-                        ao2.ctypes.data_as(ctypes.c_void_p),
-                        ctypes.c_int(nao), ctypes.c_int(ngrids),
-                        ctypes.c_int(BLKSIZE),
-                        non0tab.ctypes.data_as(ctypes.c_void_p),
-                        mol._atm.ctypes.data_as(ctypes.c_void_p), natm,
-                        mol._bas.ctypes.data_as(ctypes.c_void_p), nbas,
-                        mol._env.ctypes.data_as(ctypes.c_void_p))
-    return vv
