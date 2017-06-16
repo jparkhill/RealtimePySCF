@@ -139,14 +139,15 @@ class tdscf:
         Returns:
             Fock matrix(lao) . Updates self.F
         """
-        if self.params["Model"] == "TDHF" or self.params["Model"] == "Corr":
+        if self.params["Model"] == "TDHF" or self.params["Model"] == "TDCIS":
             Pt = 2.0*TransMat(P,self.X,-1)
             J,K = self.get_jk(Pt)
             Veff = 0.5*(J+J.T.conj()) - 0.5*(0.5*(K + K.T.conj()))
             if self.adiis and it > 0:
                 return TransMat(self.adiis.update(self.S,Pt,self.H + Veff),self.X)
             else:
-                return  TransMat(self.H + 0.5*(J+J.T.conj()) - 0.5*(0.5*(K + K.T.conj())),self.X)
+                return TransMat(self.H + 0.5*(J+J.T.conj()) - 0.5*(0.5*(K + K.T.conj())),self.X)
+
         elif self.params["Model"] == "TDDFT":
             Pt = 2 * TransMat(P,self.X,-1) # to AO
 	    J = self.get_j(Pt)
@@ -426,18 +427,17 @@ class tdscf:
         S = self.S.copy()
         SX = np.dot(S,self.X)
         Plao = 0.5*TransMat(self.the_scf.get_init_guess(self.mol, self.the_scf.init_guess), SX).astype(complex)
-	#print "Plao", Plao
         adiis = self.the_scf.DIIS(self.the_scf, self.the_scf.diis_file)
         adiis.space = self.the_scf.diis_space
         adiis.rollback = self.the_scf.diis_space_rollback
         self.adiis = adiis
-
+	print "Plao", Plao
         self.F = self.FockBuild(Plao)
 	print "F", self.F
         Plao_old = Plao
-        print "Enuc", self.Enuc
-        #self.energy(Plao)
+	#print "energy(Plao)", self.energy(Plao)
         E = self.energy(Plao)+ self.Enuc
+	print E
 
         # if (self.params["Model"] == "TDHF"):
         while (err > 10**-10):
@@ -676,7 +676,7 @@ class tdscf:
         """
         P: Density in LAO basis.
         """
-        if (self.params["Model"] == "TDHF" or self.params["Model"] == "BBGKY"):
+        if (self.params["Model"] == "TDHF" or self.params["Model"] == "BBGKY" or self.params["Model"] == "TDCIS"):
             Hlao = TransMat(self.H,self.X)
             return (self.Enuc+np.trace(np.dot(Plao,Hlao+self.F))).real
         elif self.params["Model"] == "TDDFT":
