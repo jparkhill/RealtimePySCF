@@ -119,10 +119,10 @@ class tdcis(tdscf.tdscf):
         """
         Direct port of our gen_scfman/TCL_EE2.h::step()
         """
-        if (self.params["BBGKY"] or self.params["TDTDA"]):
+        if (self.params["BBGKY"]):
             return self.BBGKYstep(time)
-        else:
-            raise Exception("Why?")
+        #else:
+        #    raise Exception("Why?")
         if (self.params["Print"]>0.0):
             nocs, nos = np.linalg.eig(self.rho)
             print "Noocs: ", nocs

@@ -778,9 +778,8 @@ class tdscf:
         while (iter<self.params["MaxIter"]):
             if self.t > 2 * self.params["tOn"] and EH == 0:
                 self.WriteEH()
-                EH = 1
+               	EH = 1
             self.step(self.t)
-            #print self.t
             #self.log.append(self.loginstant(iter))
             f.write(self.loginstant(iter)+"\n")
             # Do logging.
