@@ -72,7 +72,6 @@ class tdscf:
         # Objects
         self.the_scf  = the_scf_
         self.mol = the_scf_.mol
-        self.MyBO = None
         self.auxmol_set()
         self.params = dict()
         self.auxmol_set()
@@ -140,9 +139,7 @@ class tdscf:
         Returns:
             Fock matrix(lao) . Updates self.F
         """
-        # if (self.params["Model"]=="TDHF_BO"):
-        #     return MyBO.FockBuild_BO(P) # transforms P into
-        if self.params["Model"] == "TDHF":
+        if self.params["Model"] == "TDHF" or self.params["Model"] == "Corr":
             Pt = 2.0*TransMat(P,self.X,-1)
             J,K = self.get_jk(Pt)
             Veff = 0.5*(J+J.T.conj()) - 0.5*(0.5*(K + K.T.conj()))
@@ -151,11 +148,10 @@ class tdscf:
             else:
                 return  TransMat(self.H + 0.5*(J+J.T.conj()) - 0.5*(0.5*(K + K.T.conj())),self.X)
         elif self.params["Model"] == "TDDFT":
-            Pt = 2 * TransMat(P,self.X,-1)
-            Veff = self.get_j(Pt)
-            #Veff = self.the_scf.get_j(self.the_scf.mol,Pt)
-            Veff += self.get_vxc(Pt)
-            #Veff = J + Vxc
+            Pt = 2 * TransMat(P,self.X,-1) # to AO
+	    J = self.get_j(Pt)
+	    Vxc = self.get_vxc(Pt) # Include the Hybrid with K matrix
+            Veff = J + Vxc
             if self.adiis and it > 0:
                 return TransMat(self.adiis.update(self.S,Pt,self.H + Veff),self.X)
             else:
@@ -430,16 +426,17 @@ class tdscf:
         S = self.S.copy()
         SX = np.dot(S,self.X)
         Plao = 0.5*TransMat(self.the_scf.get_init_guess(self.mol, self.the_scf.init_guess), SX).astype(complex)
+	#print "Plao", Plao
         adiis = self.the_scf.DIIS(self.the_scf, self.the_scf.diis_file)
         adiis.space = self.the_scf.diis_space
         adiis.rollback = self.the_scf.diis_space_rollback
         self.adiis = adiis
 
         self.F = self.FockBuild(Plao)
+	print "F", self.F
         Plao_old = Plao
         print "Enuc", self.Enuc
-        print "self.energy(Plao)", self.energy(Plao)
-	print "Plao", Plao
+        #self.energy(Plao)
         E = self.energy(Plao)+ self.Enuc
 
         # if (self.params["Model"] == "TDHF"):
@@ -684,9 +681,13 @@ class tdscf:
             return (self.Enuc+np.trace(np.dot(Plao,Hlao+self.F))).real
         elif self.params["Model"] == "TDDFT":
             Hlao = TransMat(self.H,self.X)
+	    print Hlao
             P = TransMat(Plao,self.X,-1)
+	    print "Hlao", Hlao
+	    print "P", P
             #P = 0.5*Plao
             J = self.get_j(2*P)
+            #J = self.J.copy()
             #J = self.the_scf.get_j(self.mol,2 * P.real)
             Exc = self.Exc #self.nr_rks_energy(self.the_scf._numint,self.mol, self.the_scf.grids, self.the_scf.xc, 2*P, 1)
             if(self.hyb > 0.01):
@@ -697,11 +698,11 @@ class tdscf:
             #EH = TrDot(P,2*self.H)
             EJ = TrDot(P,J)
             E = EH + EJ + Exc + self.Enuc
-            #print "ONE e",EH.real
-            #print "COLOUM",EJ.real
-            #print "EXC",Exc.real
-            #print "Nuclear", self.Enuc
-            #print "", self.the_scf.energy_nuc()
+            print "ONE e",EH.real
+            print "COLOUM",EJ.real
+            print "EXC",Exc.real
+            print "Nuclear", self.Enuc
+            print "", self.the_scf.energy_nuc()
             return E.real
 
     def loginstant(self,iter):
