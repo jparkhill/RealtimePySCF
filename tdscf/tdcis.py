@@ -61,20 +61,21 @@ class tdcis(tdscf.tdscf):
         self.Bmo = np.einsum('jip,ik->jkp', np.einsum('ijp,ik->kjp', self.B, self.C), self.C)
 
     def MakeVi(self):
-        self.Vi = np.einsum('pri,qsi->pqrs', self.Bmo,self.Bmo)
-        self.d2 = np.array([[j-i for i in self.eigs] for j in self.eigs])
-        if (0):
-            # Check this with a quick MP2... works.
-            T=np.zeros((self.n_occ,self.n_occ,self.n_virt,self.n_virt))
-            for i in range(self.n_occ):
-                for j in range(self.n_occ):
-                    for a in range(self.n_occ,self.n_mo):
-                        for b in range(self.n_occ,self.n_mo):
-                            T[i,j,a-self.n_occ,b-self.n_occ] = (2.0*self.Vi[i,j,a,b]-self.Vi[i,j,b,a])/(self.eigs[a]+self.eigs[b]-self.eigs[i]-self.eigs[j])
-                            print "T*V", i,j,a,b, self.Vi[i,j,a,b], T[i,j,a-self.n_occ,b-self.n_occ]*self.Vi[i,j,a,b]
+		print "MakeVi"
+		self.Vi = np.einsum('pri,qsi->pqrs', self.Bmo,self.Bmo)
+		self.d2 = np.array([[j-i for i in self.eigs] for j in self.eigs])
+		if (1):
+		    # Check this with a quick MP2... works.
+		    T=np.zeros((self.n_occ,self.n_occ,self.n_virt,self.n_virt))
+		    for i in range(self.n_occ):
+		        for j in range(self.n_occ):
+		            for a in range(self.n_occ,self.n_mo):
+		                for b in range(self.n_occ,self.n_mo):
+		                    T[i,j,a-self.n_occ,b-self.n_occ] = (2.0*self.Vi[i,j,a,b]-self.Vi[i,j,b,a])/(self.eigs[a]+self.eigs[b]-self.eigs[i]-self.eigs[j])
+		                    print "T*V", i,j,a,b, self.Vi[i,j,a,b], T[i,j,a-self.n_occ,b-self.n_occ]*self.Vi[i,j,a,b]
 
-            emp2 = np.einsum('ijab,ijab',T,self.Vi[:self.n_occ,:self.n_occ,self.n_occ:,self.n_occ:])
-            print "EMP2******", emp2
+		    emp2 = np.einsum('ijab,ijab',T,self.Vi[:self.n_occ,:self.n_occ,self.n_occ:,self.n_occ:])
+		    print "***EMP2: ", emp2
 
     def BuildSpinOrbitalV(self):
         self.Vso = np.zeros(shape=(self.nso,self.nso,self.nso,self.nso),dtype = np.float)
@@ -161,7 +162,7 @@ class tdcis(tdscf.tdscf):
         }
         rhoDot_ += tmp+tmp.t();
         """
-        print "EH binding energy: ", self.Vi[self.n_occ,self.n_occ-1,self.n_occ,self.n_occ-1]
+        #print "EH binding energy: ", self.Vi[self.n_occ,self.n_occ-1,self.n_occ,self.n_occ-1]
         tmp = 2.j*np.einsum("bija,ai->bj",self.Vi,rho_)
         tmp -= 1.j*np.einsum("biaj,ai->bj",self.Vi,rho_)
         return tmp+tmp.T.conj()

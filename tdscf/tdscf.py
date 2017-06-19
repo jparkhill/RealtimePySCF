@@ -29,60 +29,61 @@ class tdscf:
         return arg
 
     def __init__(self,the_scf_,prm=None,output = 'log.dat', prop_=True):
-        """
-        Args:
-            the_scf an SCF object from pyscf (should probably take advantage of complex RKS already in PYSCF)
-        Returns:
-            Nothing.
-        """
-        #To be Sorted later
-        self.Enuc = the_scf_.mol.energy_nuc()
-        #the_scf_.e_tot - dft.rks.energy_elec(the_scf_,the_scf_.make_rdm1())[0]
-        self.eri3c = None
-        self.eri2c = None
-        self.n_aux = None
-        self.muxo = None
-        self.muyo = None
-        self.muzo = None
-        self.mu0 = None
-        self.hyb = the_scf_._numint.hybrid_coeff(the_scf_.xc, spin=(the_scf_.mol.spin>0)+1)
-        self.adiis = None
-        self.Exc = None
-        #Global numbers
-        self.t = 0.0
-        self.n_ao = None
-        self.n_mo = None
-        self.n_occ = None
-        self.n_virt = None
-        self.n_e = None
-        #Global Matrices
-        self.rho = None # Current MO basis density matrix. (the idempotent (0,1) kind)
-        self.rhoM12 = None # For MMUT step
-        self.F = None # (LAO x LAO)
-        self.K = None
-        self.J = None
-        self.eigs = None # current fock eigenvalues.
-        self.S = None # (ao X ao)
-        self.C = None # (ao X mo)
-        self.X = None # AO, LAO
-        self.V = None # LAO, current MO
-        self.H = None # (ao X ao)  core hamiltonian.
-        self.B = None # for ee2
-        self.log = []
-        # Objects
-        self.the_scf  = the_scf_
-        self.mol = the_scf_.mol
-        self.auxmol_set()
-        self.params = dict()
-        self.auxmol_set()
-        self.initialcondition(prm)
-        self.field = fields(the_scf_, self.params)
-        self.field.InitializeExpectation(self.rho, self.C)
-        start = time.time()
-        self.prop(output)
-        end = time.time()
-        print "Propagation time:", end - start
-        return
+		"""
+		Args:
+		    the_scf an SCF object from pyscf (should probably take advantage of complex RKS already in PYSCF)
+		Returns:
+		    Nothing.
+		"""
+		#To be Sorted later
+		self.Enuc = the_scf_.mol.energy_nuc()
+		#the_scf_.e_tot - dft.rks.energy_elec(the_scf_,the_scf_.make_rdm1())[0]
+		self.eri3c = None
+		self.eri2c = None
+		self.n_aux = None
+		self.muxo = None
+		self.muyo = None
+		self.muzo = None
+		self.mu0 = None
+		self.hyb = the_scf_._numint.hybrid_coeff(the_scf_.xc, spin=(the_scf_.mol.spin>0)+1)
+		self.adiis = None
+		self.Exc = None
+		#Global numbers
+		self.t = 0.0
+		self.n_ao = None
+		self.n_mo = None
+		self.n_occ = None
+		self.n_virt = None
+		self.n_e = None
+		#Global Matrices
+		self.rho = None # Current MO basis density matrix. (the idempotent (0,1) kind)
+		self.rhoM12 = None # For MMUT step
+		self.F = None # (LAO x LAO)
+		self.K = None
+		self.J = None
+		self.eigs = None # current fock eigenvalues.
+		self.S = None # (ao X ao)
+		self.C = None # (ao X mo)
+		self.X = None # AO, LAO
+		self.V = None # LAO, current MO
+		self.H = None # (ao X ao)  core hamiltonian.
+		self.B = None # for ee2
+		self.log = []
+		# Objects
+		self.the_scf  = the_scf_
+		self.mol = the_scf_.mol
+		self.auxmol_set()
+		self.params = dict()
+		self.auxmol_set()
+		self.initialcondition(prm)
+		self.field = fields(the_scf_, self.params)
+		self.field.InitializeExpectation(self.rho, self.C)
+		start = time.time()
+		if (prop_):
+			self.prop(output)
+		end = time.time()
+		print "Propagation time:", end - start
+		return
 
     def auxmol_set(self,auxbas = "weigend"):
         print "GENERATING INTEGRALS"
@@ -435,7 +436,7 @@ class tdscf:
         self.F = self.FockBuild(Plao)
         Plao_old = Plao
         E = self.energy(Plao)+ self.Enuc
-	#print E
+	#-print E
 
         # if (self.params["Model"] == "TDHF"):
         while (err > 10**-10):
