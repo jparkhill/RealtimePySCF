@@ -193,7 +193,7 @@ class tdscf:
 		vmat += np.einsum('ij,jk->ik',ao.T,aow)# r_dot_product(ao.T,aow)#_dot_ao_ao(self.mol, ao, aow, nao, weight.size, mask)#r_dot_product(ao[0].T,aow)
 		#with sess.as_default():
 			#aow = tf.einsum('pi,p->pi', self.toTF(ao), self.toTF(.5*weight*vrho)).eval()
-			#vmat = tf.einsum('ij,ij->ik', self.toTF(ao.T), self.toTF(aow)).eval() 
+			#vmat = tf.einsum('ij,ij->ik', self.toTF(ao.T), self.toTF(aow)).eval()
                 rho = exc = vxc = vrho = aow = None
         elif xctype == 'GGA':
             ao_deriv = 1
@@ -348,6 +348,7 @@ class tdscf:
         self.params["Model"] = "TDDFT" #"TDHF"; the difference of Fock matrix and energy
         self.params["Method"] = "MMUT"#"MMUT"
         self.params["BBGKY"]=0
+	self.params["TDTDA"]=0
         self.params["TDCIS"]=1
 
         self.params["dt"] =  0.02
@@ -431,13 +432,10 @@ class tdscf:
         adiis.space = self.the_scf.diis_space
         adiis.rollback = self.the_scf.diis_space_rollback
         self.adiis = adiis
-	print "Plao", Plao
         self.F = self.FockBuild(Plao)
-	print "F", self.F
         Plao_old = Plao
-	#print "energy(Plao)", self.energy(Plao)
         E = self.energy(Plao)+ self.Enuc
-	print E
+	#print E
 
         # if (self.params["Model"] == "TDHF"):
         while (err > 10**-10):
@@ -681,9 +679,7 @@ class tdscf:
             return (self.Enuc+np.trace(np.dot(Plao,Hlao+self.F))).real
         elif self.params["Model"] == "TDDFT":
             Hlao = TransMat(self.H,self.X)
-	    print Hlao
             P = TransMat(Plao,self.X,-1)
-	    print "Hlao", Hlao
 	    print "P", P
             #P = 0.5*Plao
             J = self.get_j(2*P)

@@ -119,7 +119,7 @@ class tdcis(tdscf.tdscf):
         """
         Direct port of our gen_scfman/TCL_EE2.h::step()
         """
-        if (self.params["BBGKY"]):
+        if (self.params["BBGKY"] or self.params["TDTDA"] or self.params["TDCIS"]):
             return self.BBGKYstep(time)
         #else:
         #    raise Exception("Why?")
@@ -161,7 +161,7 @@ class tdcis(tdscf.tdscf):
         }
         rhoDot_ += tmp+tmp.t();
         """
-        #print "EH binding energy: ", self.Vi[self.n_occ,self.n_occ-1,self.n_occ,self.n_occ-1]
+        print "EH binding energy: ", self.Vi[self.n_occ,self.n_occ-1,self.n_occ,self.n_occ-1]
         tmp = 2.j*np.einsum("bija,ai->bj",self.Vi,rho_)
         tmp -= 1.j*np.einsum("biaj,ai->bj",self.Vi,rho_)
         return tmp+tmp.T.conj()
@@ -265,6 +265,8 @@ class tdcis(tdscf.tdscf):
     def bbgky1(self,rho_):
         if (self.params["TDTDA"]):
             return self.rhoDotTDTDA(rho_)
+	elif (self.params["TDCIS"]):
+	    return self.rhoDotCIS(rho_)
         else:
             rhoso = self.SOForm(rho_)
             r2 = self.SeparableR2(rhoso)
