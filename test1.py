@@ -52,7 +52,7 @@ def TestTDCIS():
     Model	TDCIS
     Method	RK4
     dt	0.02
-    MaxIter	8000
+    MaxIter	4000
     ExDir	1.0
     EyDir	1.0
     EzDir	1.0
@@ -195,7 +195,7 @@ def TestProfileTDDFT():
 
 
 #TestProfileTDDFT()
-TestTDDFT()
-#TestTDCIS()
+#TestTDDFT()
+TestTDCIS()
 #TestTDHF()
 #TestBBGKY()
