@@ -195,64 +195,64 @@ class tdcis(tdscf.tdscf):
 
     def MakeRho(self,c0,cia):
 	""" Should take C0 and Cia as arguments returns the density matrix."""
-	Rho = np.identity(n);
+	Rho = np.identity(n)
 	Rho[self.n_e:self.n,self.n_e:self.n] *= 0.0
 	RhoHF = Rho
-	Rho *= c0.conj()*c0;
+	Rho *= c0.conj()*c0
 	Rho[self.n_occ:self.n,:self.n_occ-1] += 1/np.sqrt(2)*c0.conj()*cia
 	Rho[:self.n_occ-1,self.n_occ:self.n] += 1/np.sqrt(2)*cia.conj()*c0
 	for a in range(self.n_virt):
 		for i in range(self.n_occ):
-			Rho += cia(i,a).conj()*cia(i,a)*RhoHF
+			Rho += cia[i,a].conj()*cia[i,a]*RhoHF
 
 	for a in range(self.n_virt):
 		for i in range(self.n_occ):
 			for ap in range(self.n_virt):
-				Rho(ap+self.n_occ,a+self.n_occ) += 0.5*cia(i,ap).conj()*cia(i,a)
+				Rho[ap+self.n_occ,a+self.n_occ] += 0.5*cia[i,ap].conj()*cia[i,a]
 
 	for a in range(self.n_virt):
 		for i in range(self.n_occ):
 			for ip in range(self.n_occ):
-				Rho(i,ip) -= 0.5*cia(i,a)*cia(ip,a).conj()
+				Rho[i,ip] -= 0.5*cia[i,a]*cia[ip,a].conj()
 
 	return Rho
 	print "Trace Rho: ", np.trace(Rho)
 	print "c0^2: ", c0.conj()*c0
-	print "cia^2: ", sum(cia.conj()*cia
+	print "cia^2: ", sum(cia.conj()%cia)
 
     def CISDOT(self, cia ,c0, ciadot, c0dot, tnow):
 	# Make Vi & hmu, Check Vi
         # c0dot
-        for (int a = 0; a < nv; a++)
-            for(int i = 0; i< no; i++)
-                c0dot += j * cia(a, i) * hmu(i,no+a)
+        for a in range(self.n_virt):
+            for i in range(self.n_occ):
+                c0dot += j * cia[a, i] * hmu[i,no+a]
 
         # first term of ciadot
         for a in range(self.n_virt):
             for i in range(self.n_occ):
-                ciadot(i,a) += - j * (self.eigs[no + a]-self.eigs[i]) * cia(i,a)
+                ciadot[i,a] += - j * (self.eigs[no + a]-self.eigs[i]) * cia[i,a]
 
         # second term of ciadot
         for a in range(self.n_virt):
             for i in range(self.n_occ):
                 for ap in range(self.n_virt):
                     for ip in range(self.n_occ):
-                        ciadot(i,a) += - j * cia(ip,ap) * (2 * Vi[(a+no) * n3 + ip * n2 + i * n + (ap+no)] - Vi[(a+no) * n3 + ip * n2 + (ap+no) * n + i])
+                        ciadot[i,a] += - j * cia[ip,ap] * (2 * Vi[(a+no) * n3 + ip * n2 + i * n + (ap+no)] - Vi[(a+no) * n3 + ip * n2 + (ap+no) * n + i])
 
         # last term of ciadot
         for a in range(self.n_virt):
             for i in range(self.n_occ):
-                ciadot(i,a) += j * C0 * hmu(i,no+a)
+                ciadot[i,a] += j * C0 * hmu[i,no+a]
 
         for a in range(self.n_virt):
             for i in range(self.n_occ):
                 for ap in range(self.n_virt):
-                    ciadot(i,a) += j/np.sqrt(2)* cia(i,ap) * hmu(no+a,no+ap)
+                    ciadot[i,a] += j/np.sqrt(2)* cia[i,ap] * hmu[no+a,no+ap]
 
         for a in range(self.n_virt):
             for i in range(self.n_occ):
-                or ip in range(self.n_occ):
-                    ciadot(i,a) += -j/np.sqrt(2)* cia(ip,a) * hmu(i,ip)
+                for ip in range(self.n_occ):
+                    ciadot[i,a] += -j/np.sqrt(2)* cia[ip,a] * hmu[i,ip]
 
 	return
 
@@ -270,27 +270,27 @@ class tdcis(tdscf.tdscf):
 			print "CIS step"
 
         k1 = np.zeros(self.n_virt,self.n_occ)
-		k2= np.zeros(self.n_virt,self.n_occ)
-		k3 = np.zeros(self.n_virt,self.n_occ)
-		k4= np.zeros(self.n_virt,self.n_occ)
+	k2= np.zeros(self.n_virt,self.n_occ)
+	k3 = np.zeros(self.n_virt,self.n_occ)
+	k4= np.zeros(self.n_virt,self.n_occ)
 
-        k01 = 0.0; k02 = 0.0; k03 = 0.0; k04 = 0.0;
+        k01 = 0.0; k02 = 0.0; k03 = 0.0; k04 = 0.0
 
-        CISDOT(cia, c0, k1, k01, tnow);
-        CISDOT(cia+k1*dt/2.0, c0+k01*dt/2.0, k2, k02, tnow+dt/2.0);
-        CISDOT(cia+k2*dt/2.0, c0+k02*dt/2.0, k3, k03, tnow+dt/2.0);
-        CISDOT(cia+k3*dt, c0+k03*dt, k4, k04, tnow+dt);
+        CISDOT(cia, c0, k1, k01, tnow)
+        CISDOT(cia+k1*dt/2.0, c0+k01*dt/2.0, k2, k02, tnow+dt/2.0)
+        CISDOT(cia+k2*dt/2.0, c0+k02*dt/2.0, k3, k03, tnow+dt/2.0)
+        CISDOT(cia+k3*dt, c0+k03*dt, k4, k04, tnow+dt)
 
-        cia += dt/6.0 * (k1 + 2*k2 + 2*k3 + k4);
-        c0 += dt/6.0 * (k01 + 2*k02 + 2*k03 + k04);
+        cia += dt/6.0 * (k1 + 2*k2 + 2*k3 + k4)
+        c0 += dt/6.0 * (k01 + 2*k02 + 2*k03 + k04)
 
-        sum1 = c0*c0.conj().real + np.cumsum(cia%cia.conj());
-        cia /= np.sqrt(sum1);
-        c0 /= np.sqrt(sum1);
+        sum1 = c0*c0.conj().real + np.cumsum(cia%cia.conj())
+        cia /= np.sqrt(sum1)
+        c0 /= np.sqrt(sum1)
 
-        dRho_ = MakeRho() - dRho_;
-        cout << endl << tnow << endl;
-        dRho_.print("dRho");
+        dRho_ = MakeRho() - dRho_
+        cout << endl << tnow << endl
+        print "dRho", dRho_
 
     def BBGKYstep(self,time):
         """
