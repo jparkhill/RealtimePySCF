@@ -38,6 +38,9 @@ class tdcis(tdscf.tdscf):
         self.MakeVi()
         self.BuildSpinOrbitalV()
 	if self.params["TDCIS"]:
+	    self.j = np.complex(0,1)
+	    self.c0 = np.complex(1,0)
+	    self.cia = np.zeros((self.n_virt,self.n_occ))
 	    self.propTDCIS(output)
 	else:
             self.prop(output)
@@ -225,78 +228,90 @@ class tdcis(tdscf.tdscf):
 
     def CISDOT(self, cia ,c0, ciadot, c0dot, time):
 	# Make Vi & hmu, Check Vi
+	hmu = TransMat(self.H,self.C)
+	hmu, IsOn = self.field.ApplyField(hmu, self.C, time)
+	w,v = scipy.linalg.eig(hmu)
+	Ud = np.exp(w*(-0.5j)*self.params["dt"]);
+	U = TransMat(np.diag(Ud),v,-1)
+	n = self.n
+	no = self.n_occ
+	n2 = n*n
+	n3 = n2*n
+    	n4 = n3*n
+
         # c0dot
         for a in range(self.n_virt):
             for i in range(self.n_occ):
-                c0dot += j * cia[a, i] * hmu[i,no+a]
+                c0dot += self.j * self.cia[i,a] * hmu[no+a,i]
 
         # first term of ciadot
         for a in range(self.n_virt):
             for i in range(self.n_occ):
-                ciadot[i,a] += - j * (self.eigs[no + a]-self.eigs[i]) * cia[i,a]
+                ciadot[a,i] += - self.j * (self.eigs[no + a]-self.eigs[i]) * self.cia[a,i]
 
         # second term of ciadot
         for a in range(self.n_virt):
             for i in range(self.n_occ):
                 for ap in range(self.n_virt):
                     for ip in range(self.n_occ):
-                        ciadot[i,a] += - j * cia[ip,ap] * (2 * Vi[(a+no) * n3 + ip * n2 + i * n + (ap+no)] - Vi[(a+no) * n3 + ip * n2 + (ap+no) * n + i])
+                        ciadot[a,i] += - self.j * self.cia[ap,ip] * (2 * self.Vi[a,ip,i,ap] - self.Vi[a,ip,ap,i])
 
         # last term of ciadot
         for a in range(self.n_virt):
             for i in range(self.n_occ):
-                ciadot[i,a] += j * C0 * hmu[i,no+a]
+                ciadot[a,i] += self.j * self.c0 * hmu[no+a,i]
 
         for a in range(self.n_virt):
             for i in range(self.n_occ):
                 for ap in range(self.n_virt):
-                    ciadot[i,a] += j/np.sqrt(2)* cia[i,ap] * hmu[no+a,no+ap]
+                    ciadot[a,i] += self.j / np.sqrt(2) * self.cia[ap,i] * hmu[no+ap,no+a]
 
         for a in range(self.n_virt):
             for i in range(self.n_occ):
                 for ip in range(self.n_occ):
-                    ciadot[i,a] += -j/np.sqrt(2)* cia[ip,a] * hmu[i,ip]
+                    ciadot[a,i] += -self.j / np.sqrt(2) * self.cia[a,ip] * hmu[ip,i]
 
 	return
 
-	def propTDCIS(self,output):
-            """
-            The main tdcis propagation loop.
-            """
-	    EH = 0
-	    iter = 0
-	    self.t = 0
-	    f = open(output,'a')
-	    if self.params["SavePopulation"] == 1:
-		fpop = open('pop.dat','a')
+    def propTDCIS(self,output):
+        """
+        The main tdcis propagation loop.
+        """
+	self.rhoAO0 = 2.0*TransMat(TransMat(self.rho,self.V,-1),self.X,-1)
+	EH = 0
+	iter = 0
+	self.t = 0
+	f = open(output,'a')
+	if self.params["SavePopulation"] == 1:
+	    fpop = open('pop.dat','a')
 
-            print "Energy Gap (eV): ", abs(self.eigs[self.n_occ]-self.eigs[self.n_occ-1])*27.2114
-	    print "\n\nPropagation Begins"
-	    start = time.time()
-            while (iter<self.params["MaxIter"]):
-		if (self.t > 2 * self.params["tOn"]) and (EH == 0):
-		    self.WriteEH()
-               	    EH = 1
-            	self.CISRK4step(self.t)
-                f.write(self.loginstant(iter)+"\n")
+        print "Energy Gap (eV): ", abs(self.eigs[self.n_occ]-self.eigs[self.n_occ-1])*27.2114
+	print "\n\nPropagation Begins"
+	start = time.time()
+        while (iter<self.params["MaxIter"]):
+	    if (self.t > 2 * self.params["tOn"]) and (EH == 0):
+		self.WriteEH()
+               	EH = 1
+            self.CISRK4step(self.t)
+            f.write(self.loginstant(iter)+"\n")
             # Do logging.
-            	self.t = self.t + self.params["dt"]
-		cpop = np.zeros((1+no*nv),dtype=np.complex)
-		for i in range(1+self.n_occ*self.n_virt):
-		    if (i==0):
-                	cpop[i] = c0 * conj[c0]
-		    else:
-                	cpop[i] = cia[i-1] * cia[i-1].conj()
-		if self.params["SavePopulation"] == 1:
-		    Pop = MakeRho(c0,cia)
-		    for ii in range(1+self.n_occ*self.n_virt):
-		    	fpop.write(str(self.t)+" "+str(Pop[ii,ii].real)+"\n")
+            self.t = self.t + self.params["dt"]
+	    cpop = np.zeros(shape=(1+no*nv),dtype=np.complex)
+	    for i in range(1+self.n_occ*self.n_virt):
+		if (i==0):
+                    cpop[i] = c0 * conj[c0]
+		else:
+                    cpop[i] = cia[i-1] * cia[i-1].conj()
+	    if self.params["SavePopulation"] == 1:
+		Pop = self.MakeRho(c0,cia)
+		for ii in range(1+self.n_occ*self.n_virt):
+		    fpop.write(str(self.t)+" "+str(Pop[ii,ii].real)+"\n")
 
-                if iter%self.params["StatusEvery"] ==0 or iter == self.params["MaxIter"]-1:
-                    end = time.time()
-                    print (end - start)/(60*60*self.t * FsPerAu * 0.001), "hr/ps"
-                iter = iter + 1
-            f.close()
+            if iter%self.params["StatusEvery"] ==0 or iter == self.params["MaxIter"]-1:
+                end = time.time()
+                print (end - start)/(60*60*self.t * FsPerAu * 0.001), "hr/ps"
+            iter = iter + 1
+        f.close()
 
     def Transform2(self, r2_, u_ ):
         """ Perform a two particle unitary transformation. """
@@ -307,30 +322,33 @@ class tdcis(tdscf.tdscf):
         tmp = np.einsum("pqrt,ts->pqrs", tmp, u_so.T.conj())
         return tmp
 
-	def CISRK4step(self, time):
-		if (self.params["Print"]):
-			print "CIS step"
+    def CISRK4step(self, time):
+	if (self.params["Print"]):
+	    print "CIS step"
+	dt = self.params["dt"]
 
-        k1 = np.zeros(self.n_virt,self.n_occ)
-	k2= np.zeros(self.n_virt,self.n_occ)
-	k3 = np.zeros(self.n_virt,self.n_occ)
-	k4= np.zeros(self.n_virt,self.n_occ)
+	dRho_ = np.zeros((self.n,self.n))
+
+        k1 = np.zeros((self.n_virt,self.n_occ))
+	k2= np.zeros((self.n_virt,self.n_occ))
+	k3 = np.zeros((self.n_virt,self.n_occ))
+	k4= np.zeros((self.n_virt,self.n_occ))
 
         k01 = 0.0; k02 = 0.0; k03 = 0.0; k04 = 0.0
 
-        CISDOT(cia, c0, k1, k01, time)
-        CISDOT(cia+k1*dt/2.0, c0+k01*dt/2.0, k2, k02, time+dt/2.0)
-        CISDOT(cia+k2*dt/2.0, c0+k02*dt/2.0, k3, k03, time+dt/2.0)
-        CISDOT(cia+k3*dt, c0+k03*dt, k4, k04, time+dt)
+        self.CISDOT(self.cia, self.c0, k1, k01, time)
+        self.CISDOT(self.cia+k1*dt/2.0, self.c0+k01*dt/2.0, k2, k02, time+dt/2.0)
+        self.CISDOT(self.cia+k2*dt/2.0, self.c0+k02*dt/2.0, k3, k03, time+dt/2.0)
+        self.CISDOT(self.cia+k3*dt, self.c0+k03*dt, k4, k04, time+dt)
 
-        cia += dt/6.0 * (k1 + 2*k2 + 2*k3 + k4)
-        c0 += dt/6.0 * (k01 + 2*k02 + 2*k03 + k04)
+        self.cia += dt/6.0 * (k1 + 2*k2 + 2*k3 + k4)
+        self.c0 += dt/6.0 * (k01 + 2*k02 + 2*k03 + k04)
 
-        sum1 = c0*c0.conj().real + np.cumsum(cia%cia.conj())
-        cia /= np.sqrt(sum1)
-        c0 /= np.sqrt(sum1)
+        sum1 = self.c0*np.conj(self.c0).real + np.cumsum(self.cia%(np.conj(self.cia))).real
+        self.cia = self.cia / np.sqrt(sum1)
+        self.c0 = self.c0 / np.sqrt(sum1)
 
-        dRho_ = MakeRho() - dRho_
+        dRho_ = self.MakeRho() - dRho_
         cout << endl << time << endl
         print "dRho", dRho_
 

@@ -779,7 +779,6 @@ class tdscf:
                 self.WriteEH()
                	EH = 1
             self.step(self.t)
-            #self.log.append(self.loginstant(iter))
             f.write(self.loginstant(iter)+"\n")
             # Do logging.
             self.t = self.t + self.params["dt"]
