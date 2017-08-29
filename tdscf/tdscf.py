@@ -364,6 +364,7 @@ class tdscf:
         self.params["tOn"] = 7.0*self.params["Tau"]
         self.params["ApplyImpulse"] = 1
         self.params["ApplyCw"] = 0
+	self.params["SavePopulation"] = 1
 
         self.params["StatusEvery"] = 5000
         self.params["Print"]=0
@@ -396,6 +397,7 @@ class tdscf:
         print "ApplyImpulse:", self.params["ApplyImpulse"]
         print "ApplyCw:", self.params["ApplyCw"]
         print "StatusEvery:", self.params["StatusEvery"]
+	print "SavePopulation:", self.params["SavePopulation"]
         print "=============================\n\n"
 
         return

@@ -1,5 +1,5 @@
 import numpy as np
-import scipy
+import scipy, os, time
 import scipy.linalg
 from func import *
 from pyscf import gto, dft, scf, ao2mo
@@ -37,7 +37,10 @@ class tdcis(tdscf.tdscf):
         self.MakeBMO()
         self.MakeVi()
         self.BuildSpinOrbitalV()
-        self.prop(output)
+	if self.params["TDCIS"]:
+	    self.propTDCIS(output)
+	else:
+            self.prop(output)
         return
 
     def SOForm(self, a_):
@@ -120,10 +123,10 @@ class tdcis(tdscf.tdscf):
         """
         Direct port of our gen_scfman/TCL_EE2.h::step()
         """
-        if (self.params["BBGKY"] or self.params["TDTDA"] or self.params["TDCIS"]):
+        if (self.params["BBGKY"] or self.params["TDTDA"]):
             return self.BBGKYstep(time)
-        #else:
-        #    raise Exception("Why?")
+        else:
+            raise Exception("Why?")
         if (self.params["Print"]>0.0):
             nocs, nos = np.linalg.eig(self.rho)
             print "Noocs: ", nocs
@@ -195,7 +198,7 @@ class tdcis(tdscf.tdscf):
 
     def MakeRho(self,c0,cia):
 	""" Should take C0 and Cia as arguments returns the density matrix."""
-	Rho = np.identity(n)
+	Rho = np.eye(self.n)
 	Rho[self.n_e:self.n,self.n_e:self.n] *= 0.0
 	RhoHF = Rho
 	Rho *= c0.conj()*c0
@@ -220,7 +223,7 @@ class tdcis(tdscf.tdscf):
 	print "c0^2: ", c0.conj()*c0
 	print "cia^2: ", sum(cia.conj()%cia)
 
-    def CISDOT(self, cia ,c0, ciadot, c0dot, tnow):
+    def CISDOT(self, cia ,c0, ciadot, c0dot, time):
 	# Make Vi & hmu, Check Vi
         # c0dot
         for a in range(self.n_virt):
@@ -256,6 +259,45 @@ class tdcis(tdscf.tdscf):
 
 	return
 
+	def propTDCIS(self,output):
+            """
+            The main tdcis propagation loop.
+            """
+	    EH = 0
+	    iter = 0
+	    self.t = 0
+	    f = open(output,'a')
+	    if self.params["SavePopulation"] == 1:
+		fpop = open('pop.dat','a')
+
+            print "Energy Gap (eV): ", abs(self.eigs[self.n_occ]-self.eigs[self.n_occ-1])*27.2114
+	    print "\n\nPropagation Begins"
+	    start = time.time()
+            while (iter<self.params["MaxIter"]):
+		if (self.t > 2 * self.params["tOn"]) and (EH == 0):
+		    self.WriteEH()
+               	    EH = 1
+            	self.CISRK4step(self.t)
+                f.write(self.loginstant(iter)+"\n")
+            # Do logging.
+            	self.t = self.t + self.params["dt"]
+		cpop = np.zeros((1+no*nv),dtype=np.complex)
+		for i in range(1+self.n_occ*self.n_virt):
+		    if (i==0):
+                	cpop[i] = c0 * conj[c0]
+		    else:
+                	cpop[i] = cia[i-1] * cia[i-1].conj()
+		if self.params["SavePopulation"] == 1:
+		    Pop = MakeRho(c0,cia)
+		    for ii in range(1+self.n_occ*self.n_virt):
+		    	fpop.write(str(self.t)+" "+str(Pop[ii,ii].real)+"\n")
+
+                if iter%self.params["StatusEvery"] ==0 or iter == self.params["MaxIter"]-1:
+                    end = time.time()
+                    print (end - start)/(60*60*self.t * FsPerAu * 0.001), "hr/ps"
+                iter = iter + 1
+            f.close()
+
     def Transform2(self, r2_, u_ ):
         """ Perform a two particle unitary transformation. """
         u_so = self.SOForm(u_)
@@ -265,7 +307,7 @@ class tdcis(tdscf.tdscf):
         tmp = np.einsum("pqrt,ts->pqrs", tmp, u_so.T.conj())
         return tmp
 
-	def CISRK4step(self, tnow):
+	def CISRK4step(self, time):
 		if (self.params["Print"]):
 			print "CIS step"
 
@@ -276,10 +318,10 @@ class tdcis(tdscf.tdscf):
 
         k01 = 0.0; k02 = 0.0; k03 = 0.0; k04 = 0.0
 
-        CISDOT(cia, c0, k1, k01, tnow)
-        CISDOT(cia+k1*dt/2.0, c0+k01*dt/2.0, k2, k02, tnow+dt/2.0)
-        CISDOT(cia+k2*dt/2.0, c0+k02*dt/2.0, k3, k03, tnow+dt/2.0)
-        CISDOT(cia+k3*dt, c0+k03*dt, k4, k04, tnow+dt)
+        CISDOT(cia, c0, k1, k01, time)
+        CISDOT(cia+k1*dt/2.0, c0+k01*dt/2.0, k2, k02, time+dt/2.0)
+        CISDOT(cia+k2*dt/2.0, c0+k02*dt/2.0, k3, k03, time+dt/2.0)
+        CISDOT(cia+k3*dt, c0+k03*dt, k4, k04, time+dt)
 
         cia += dt/6.0 * (k1 + 2*k2 + 2*k3 + k4)
         c0 += dt/6.0 * (k01 + 2*k02 + 2*k03 + k04)
@@ -289,7 +331,7 @@ class tdcis(tdscf.tdscf):
         c0 /= np.sqrt(sum1)
 
         dRho_ = MakeRho() - dRho_
-        cout << endl << tnow << endl
+        cout << endl << time << endl
         print "dRho", dRho_
 
     def BBGKYstep(self,time):
@@ -368,7 +410,7 @@ class tdcis(tdscf.tdscf):
             return -1.j*self.SIForm(drhoso)
 
     def bbgky2(self, rho2_):
-        """ The second equation of the BBGKY heirarchy.  """
+        """ The second equation of the BBGKY hierarchy.  """
         #r2d[tn3*t+tn2*u+tn*r+s] += -j*(vso[tn3*t+tn2*u+tn*p+q]*R2[tn3*p+tn2*q+tn*r+s]);
         #r2d[tn3*p+tn2*q+tn*t+u] -= -j*(R2[tn3*p+tn2*q+tn*r+s]*vso[tn3*r+tn2*s+tn*t+u]);
         dr2 = np.einsum("tupq,pqrs->turs",self.Vso,rho2_)
