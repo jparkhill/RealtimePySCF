@@ -350,7 +350,7 @@ class tdcis(tdscf.tdscf):
         #self.cia = self.cia / np.sqrt(sum1)
         #self.c0 = self.c0 / np.sqrt(sum1)
 
-        dRho_ = self.MakeRho(c0,cia) - dRho_
+        self.rho = self.MakeRho(c0,cia) - dRho_
 
     def BBGKYstep(self,time):
         """
