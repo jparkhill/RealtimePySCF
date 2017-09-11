@@ -52,7 +52,7 @@ def TestTDCIS():
     Model	TDCIS
     Method	RK4
     dt	0.02
-    MaxIter	4000
+    MaxIter	2000
     ExDir	1.0
     EyDir	1.0
     EzDir	1.0
@@ -60,7 +60,7 @@ def TestTDCIS():
     FieldFreq	0.9202
     ApplyImpulse	1
     ApplyCw		0
-    StatusEvery	2000
+    StatusEvery	500
     Print 0
     '''
     geom = """

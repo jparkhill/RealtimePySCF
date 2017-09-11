@@ -28,6 +28,7 @@ class tdcis(tdscf.tdscf):
         self.rho0 = self.rho.copy()
         self.Bm = None
         self.n = self.n_mo
+	self.n_e = 2.0 * self.n_occ
         self.nso = 2*self.n
         self.Vso = None # Spin orbital integrals for debugging purposes.
         self.rho2 = None # Two body DM in spin-orbital basis.
@@ -38,9 +39,8 @@ class tdcis(tdscf.tdscf):
         self.MakeVi()
         self.BuildSpinOrbitalV()
 	if self.params["TDCIS"]:
-	    self.j = np.complex(0,1)
 	    self.c0 = np.complex(1,0)
-	    self.cia = np.zeros((self.n_virt,self.n_occ))
+	    self.cia = np.zeros((self.n_occ,self.n_virt),dtype=np.complex)
 	    self.propTDCIS(output)
 	else:
             self.prop(output)
@@ -68,7 +68,7 @@ class tdcis(tdscf.tdscf):
 
     def MakeVi(self):
 		self.Vi = np.einsum('pri,qsi->pqrs', self.Bmo,self.Bmo)
-		print "Vi: ", self.Vi
+		# print "Vi: ", self.Vi
 		self.d2 = np.array([[j-i for i in self.eigs] for j in self.eigs])
 		if (1):
 		    # Check this with a quick MP2... works.
@@ -202,37 +202,33 @@ class tdcis(tdscf.tdscf):
     def MakeRho(self,c0,cia):
 	""" Should take C0 and Cia as arguments returns the density matrix."""
 	Rho = np.eye(self.n)
-	Rho[self.n_e:self.n,self.n_e:self.n] *= 0.0
 	RhoHF = Rho
-	Rho *= c0.conj()*c0
-	Rho[self.n_occ:self.n,:self.n_occ-1] += 1/np.sqrt(2)*c0.conj()*cia
-	Rho[:self.n_occ-1,self.n_occ:self.n] += 1/np.sqrt(2)*cia.conj()*c0
+	Rho = Rho*np.conj(c0)*c0
+	Rho[self.n_occ:self.n,:self.n_occ] += 1/np.sqrt(2)*np.conj(c0)*cia
+	Rho[0:self.n_occ,self.n_occ:self.n] += 1/np.sqrt(2)*np.conj(cia)*c0
 	for a in range(self.n_virt):
 		for i in range(self.n_occ):
-			Rho += cia[i,a].conj()*cia[i,a]*RhoHF
+			Rho += np.conj(cia[i,a])*cia[i,a]*RhoHF
 
 	for a in range(self.n_virt):
 		for i in range(self.n_occ):
 			for ap in range(self.n_virt):
-				Rho[ap+self.n_occ,a+self.n_occ] += 0.5*cia[i,ap].conj()*cia[i,a]
+				Rho[ap+self.n_occ,a+self.n_occ] += 0.5*np.conj(cia[i,ap])*cia[i,a]
 
 	for a in range(self.n_virt):
 		for i in range(self.n_occ):
 			for ip in range(self.n_occ):
-				Rho[i,ip] -= 0.5*cia[i,a]*cia[ip,a].conj()
+				Rho[i,ip] -= 0.5*cia[i,a]*np.conj(cia[ip,a])
 
 	return Rho
-	print "Trace Rho: ", np.trace(Rho)
-	print "c0^2: ", c0.conj()*c0
-	print "cia^2: ", sum(cia.conj()%cia)
+	# print "Trace Rho: ", np.trace(Rho)
+	# print "c0^2: ", np.conj(c0)*c0
+	# print "cia^2: ", sum(np.conj(cia)%cia)
 
     def CISDOT(self, cia ,c0, ciadot, c0dot, time):
 	# Make Vi & hmu, Check Vi
-	hmu = TransMat(self.H,self.C)
+	hmu = np.diag(self.eigs).astype(complex)
 	hmu, IsOn = self.field.ApplyField(hmu, self.C, time)
-	w,v = scipy.linalg.eig(hmu)
-	Ud = np.exp(w*(-0.5j)*self.params["dt"]);
-	U = TransMat(np.diag(Ud),v,-1)
 	n = self.n
 	no = self.n_occ
 	n2 = n*n
@@ -242,34 +238,34 @@ class tdcis(tdscf.tdscf):
         # c0dot
         for a in range(self.n_virt):
             for i in range(self.n_occ):
-                c0dot += self.j * self.cia[i,a] * hmu[no+a,i]
+                c0dot += 1j * self.cia[a,i] * hmu[i,no+a]
 
         # first term of ciadot
         for a in range(self.n_virt):
             for i in range(self.n_occ):
-                ciadot[a,i] += - self.j * (self.eigs[no + a]-self.eigs[i]) * self.cia[a,i]
+                ciadot[i,a] += - 1j * (self.eigs[no + a]-self.eigs[i]) * self.cia[i,a]
 
         # second term of ciadot
         for a in range(self.n_virt):
             for i in range(self.n_occ):
                 for ap in range(self.n_virt):
                     for ip in range(self.n_occ):
-                        ciadot[a,i] += - self.j * self.cia[ap,ip] * (2 * self.Vi[a,ip,i,ap] - self.Vi[a,ip,ap,i])
+                        ciadot[i,a] += - 1j * self.cia[ip,ap] * (2 * self.Vi[a,ip,i,ap] - self.Vi[a,ip,ap,i])
 
         # last term of ciadot
         for a in range(self.n_virt):
             for i in range(self.n_occ):
-                ciadot[a,i] += self.j * self.c0 * hmu[no+a,i]
+                ciadot[i,a] += 1j * self.c0 * hmu[i,no+a]
 
         for a in range(self.n_virt):
             for i in range(self.n_occ):
                 for ap in range(self.n_virt):
-                    ciadot[a,i] += self.j / np.sqrt(2) * self.cia[ap,i] * hmu[no+ap,no+a]
+                    ciadot[i,a] += 1j / np.sqrt(2) * self.cia[i,ap] * hmu[no+a,no+ap]
 
         for a in range(self.n_virt):
             for i in range(self.n_occ):
                 for ip in range(self.n_occ):
-                    ciadot[a,i] += -self.j / np.sqrt(2) * self.cia[a,ip] * hmu[ip,i]
+                    ciadot[a,i] += -1j / np.sqrt(2) * self.cia[ip,a] * hmu[i,ip]
 
 	return
 
@@ -283,7 +279,7 @@ class tdcis(tdscf.tdscf):
 	self.t = 0
 	f = open(output,'a')
 	if self.params["SavePopulation"] == 1:
-	    fpop = open('pop.dat','a')
+	    fpop = open(output+'_pop','a')
 
         print "Energy Gap (eV): ", abs(self.eigs[self.n_occ]-self.eigs[self.n_occ-1])*27.2114
 	print "\n\nPropagation Begins"
@@ -292,25 +288,30 @@ class tdcis(tdscf.tdscf):
 	    if (self.t > 2 * self.params["tOn"]) and (EH == 0):
 		self.WriteEH()
                	EH = 1
-            self.CISRK4step(self.t)
+            self.CISRK4step(self.cia,self.c0,self.t)
             f.write(self.loginstant(iter)+"\n")
             # Do logging.
             self.t = self.t + self.params["dt"]
-	    cpop = np.zeros(shape=(1+no*nv),dtype=np.complex)
-	    for i in range(1+self.n_occ*self.n_virt):
-		if (i==0):
-                    cpop[i] = c0 * conj[c0]
-		else:
-                    cpop[i] = cia[i-1] * cia[i-1].conj()
+	    cpop = np.zeros(shape=(self.n_occ,self.n_virt))
+
+	    for a in range(self.n_virt):
+	        for i in range(self.n_occ):
+		    if (i==0) and (a==0):
+                        cpop[i,a] = self.c0 * np.conj(self.c0)
+		    else:
+                        cpop[i,a] = self.cia[i,a] * np.conj(self.cia[i,a])
+
 	    if self.params["SavePopulation"] == 1:
-		Pop = self.MakeRho(c0,cia)
-		for ii in range(1+self.n_occ*self.n_virt):
+		Pop = self.MakeRho(self.c0,self.cia)
+		for ii in range(self.n):
 		    fpop.write(str(self.t)+" "+str(Pop[ii,ii].real)+"\n")
 
             if iter%self.params["StatusEvery"] ==0 or iter == self.params["MaxIter"]-1:
                 end = time.time()
                 print (end - start)/(60*60*self.t * FsPerAu * 0.001), "hr/ps"
             iter = iter + 1
+	if self.params["SavePopulation"] == 1:
+	    fpop.close()
         f.close()
 
     def Transform2(self, r2_, u_ ):
@@ -322,35 +323,34 @@ class tdcis(tdscf.tdscf):
         tmp = np.einsum("pqrt,ts->pqrs", tmp, u_so.T.conj())
         return tmp
 
-    def CISRK4step(self, time):
+    def CISRK4step(self, cia, c0, time):
 	if (self.params["Print"]):
 	    print "CIS step"
 	dt = self.params["dt"]
 
 	dRho_ = np.zeros((self.n,self.n))
 
-        k1 = np.zeros((self.n_virt,self.n_occ))
-	k2= np.zeros((self.n_virt,self.n_occ))
-	k3 = np.zeros((self.n_virt,self.n_occ))
-	k4= np.zeros((self.n_virt,self.n_occ))
+        k1 = np.zeros((self.n_virt,self.n_occ),dtype=np.complex)
+	k2= np.zeros((self.n_virt,self.n_occ),dtype=np.complex)
+	k3 = np.zeros((self.n_virt,self.n_occ),dtype=np.complex)
+	k4= np.zeros((self.n_virt,self.n_occ),dtype=np.complex)
 
         k01 = 0.0; k02 = 0.0; k03 = 0.0; k04 = 0.0
 
-        self.CISDOT(self.cia, self.c0, k1, k01, time)
-        self.CISDOT(self.cia+k1*dt/2.0, self.c0+k01*dt/2.0, k2, k02, time+dt/2.0)
-        self.CISDOT(self.cia+k2*dt/2.0, self.c0+k02*dt/2.0, k3, k03, time+dt/2.0)
-        self.CISDOT(self.cia+k3*dt, self.c0+k03*dt, k4, k04, time+dt)
+        self.CISDOT(cia, c0, k1, k01, time)
+        self.CISDOT(cia+k1*dt/2.0, c0+k01*dt/2.0, k2, k02, time+dt/2.0)
+        self.CISDOT(cia+k2*dt/2.0, c0+k02*dt/2.0, k3, k03, time+dt/2.0)
+        self.CISDOT(cia+k3*dt, c0+k03*dt, k4, k04, time+dt)
 
-        self.cia += dt/6.0 * (k1 + 2*k2 + 2*k3 + k4)
-        self.c0 += dt/6.0 * (k01 + 2*k02 + 2*k03 + k04)
+        cia += dt/6.0 * (k1 + 2*k2 + 2*k3 + k4)
+        c0 += dt/6.0 * (k01 + 2*k02 + 2*k03 + k04)
 
-        sum1 = self.c0*np.conj(self.c0).real + np.cumsum(self.cia%(np.conj(self.cia))).real
-        self.cia = self.cia / np.sqrt(sum1)
-        self.c0 = self.c0 / np.sqrt(sum1)
+        #sum1 = self.c0*np.conj(self.c0).real + np.cumsum(self.cia%(np.conj(self.cia))).real
+	#print "sum1 ", sum1
+        #self.cia = self.cia / np.sqrt(sum1)
+        #self.c0 = self.c0 / np.sqrt(sum1)
 
-        dRho_ = self.MakeRho() - dRho_
-        cout << endl << time << endl
-        print "dRho", dRho_
+        dRho_ = self.MakeRho(c0,cia) - dRho_
 
     def BBGKYstep(self,time):
         """
